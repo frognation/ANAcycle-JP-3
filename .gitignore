@@ -1,0 +1,13 @@
+.DS_Store
+
+# Per-worktree local dev helper
+dev-server.sh
+
+*.mov
+
+# Local backups / editor history artifacts
+backups/
+restore-local-history-report-*.json
+
+# Local project notes (not code)
+00_Project Note/
