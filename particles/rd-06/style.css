@@ -20,6 +20,36 @@ body {
     width: 100vw;
 }
 
+/* Background image layer (optional, under WebGL canvas) */
+#bgCanvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.vignette-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    display: none;
+    opacity: 0;
+    mix-blend-mode: multiply;
+    background: radial-gradient(circle at center,
+        rgba(0,0,0,0) 0%,
+        rgba(0,0,0,0) 55%,
+        rgba(0,0,0,0.65) 100%
+    );
+    transition: opacity 160ms ease;
+}
+
+body.vignette-on .vignette-overlay {
+    opacity: 1;
+}
+
 /* Canvas fills viewport */
 #canvas {
     position: fixed;
@@ -44,7 +74,7 @@ body {
 }
 
 body.show-original .original-overlay {
-    display: block;
+    display: none;
 }
 
 body.show-original #canvas {
@@ -117,6 +147,44 @@ body.show-original #canvas {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.panel-tabs {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.panel-tab-btn {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    color: rgba(255,255,255,0.8);
+    background-color: rgba(0, 0, 0, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    padding: 6px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.panel-tab-btn:hover {
+    border-color: rgba(255, 255, 255, 0.35);
+    background-color: rgba(0, 0, 0, 0.82);
+}
+
+.panel-tab-btn.is-active {
+    color: #fff;
+    border-color: rgba(74, 158, 255, 0.7);
+    background-color: rgba(74, 158, 255, 0.18);
+}
+
+.tabbed-panel {
+    display: none;
+}
+
+.tabbed-panel.is-active {
+    display: block;
 }
 
 .slider-controls {

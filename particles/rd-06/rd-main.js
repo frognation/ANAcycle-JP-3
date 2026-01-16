@@ -28,6 +28,7 @@ const TITLE_FONT_FAMILY = 'ANACycleTitle';
 const TITLE = {
   text: 'ANACYCLE',
   enabled: true,
+  position: 'center',
   sizePercent: 15,
   fillColor: '#ffffff',
   strokeColor: '#000000',
@@ -76,6 +77,18 @@ const RD = {
   sourceStrength: 0.005,
   invertImage: false,
   showOriginal: false,
+
+  // Image controls
+  imageVignette: false,
+  imageVignetteStrength: 0.65,
+  imageAutoLevels: false,
+  imageAutoLevelsStrength: 1.0,
+
+  // Brush tuning (simulation)
+  brushPower: 1.0,
+  brushNoiseScale: 1.0,
+  brushSpeckle: 0.25,
+  brushDelta: 0.06,
 };
 
 const DEFAULTS_STORAGE_KEY = 'rd-06-defaults-v1';
@@ -121,6 +134,9 @@ function applySavedDefaults() {
       'f', 'k', 'dA', 'dB', 'timestep', 'brushRadius', 'brushFeather', 'stepsPerFrame',
       'renderingStyle', 'warmStartIterations', 'simScale', 'biasX', 'biasY', 'sourceStrength',
       'invertImage',
+
+      'imageVignette', 'imageVignetteStrength', 'imageAutoLevels', 'imageAutoLevelsStrength',
+      'brushPower', 'brushNoiseScale', 'brushSpeckle', 'brushDelta',
     ]);
     applySubset(COLORS, saved.COLORS, [
       'color1', 'stop1', 'color2', 'stop2', 'color3', 'stop3', 'color4', 'stop4', 'color5', 'stop5',
@@ -128,7 +144,7 @@ function applySavedDefaults() {
       'hslFromMin', 'hslFromMax', 'hslToMin', 'hslToMax', 'hslSaturation', 'hslLuminosity',
     ]);
     applySubset(TITLE, saved.TITLE, [
-      'text', 'enabled', 'sizePercent', 'fillColor', 'strokeColor', 'strokeWidth',
+      'text', 'enabled', 'position', 'sizePercent', 'fillColor', 'strokeColor', 'strokeWidth',
       'shadowEnabled', 'shadowColor', 'shadowBlur', 'shadowOffsetX', 'shadowOffsetY',
     ]);
   } catch {
@@ -142,18 +158,16 @@ applySavedDefaults();
 // HELPER FUNCTIONS
 // ============================================
 
-function updateOriginalOverlay() {
-  const overlay = document.getElementById('originalOverlay');
-  if (!overlay) return;
-  const img = images[currentImageIndex]?.img;
-  if (!img) return;
-  overlay.src = img.src;
-  overlay.style.filter = RD.invertImage ? 'invert(1)' : 'none';
-}
-
 function setOriginalOverlayVisible(visible) {
   document.body.classList.toggle('show-original', !!visible);
-  if (visible) updateOriginalOverlay();
+}
+
+function getTitleCenterY(width, height, fontPx) {
+  const pad = height * 0.05;
+  const half = fontPx * 0.6;
+  if (TITLE.position === 'top') return pad + half;
+  if (TITLE.position === 'bottom') return height - pad - half;
+  return height / 2;
 }
 
 // ============================================
@@ -201,10 +215,22 @@ uniform float brushRadius;
 uniform float brushFeather;
 uniform float brushStrength;
 
+uniform float brushPower;
+uniform float brushNoiseScale;
+uniform float brushSpeckle;
+uniform float brushDelta;
+
 uniform vec2 bias;
 uniform vec2 resolution;
 
 varying vec2 v_uvs[9];
+
+float hash21(vec2 p) {
+  // deterministic noise in [0,1)
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 34.345);
+  return fract(p.x * p.y);
+}
 
 vec3 weights[3];
 
@@ -250,12 +276,26 @@ void main() {
       float titleMask = texture2D(titleMaskTexture, v_uvs[0]).a;
       float allowBrush = 1.0 - titleMask;
 
-      // Invisible brush: gently seed the reaction without writing a hard visible stamp
+      // Invisible brush: seed instability without a solid circular stamp.
       float feather = clamp(brushFeather, 0.0, 0.999);
       float inner = brushRadius * (1.0 - feather);
-      float influence = (1.0 - smoothstep(inner, brushRadius, distToMouse)) * allowBrush * brushStrength;
-      B = clamp(B + 0.08 * influence, 0.0, 1.0);
-      A = clamp(A - 0.04 * influence, 0.0, 1.0);
+      float falloff = (1.0 - smoothstep(inner, brushRadius, distToMouse)) * allowBrush * brushStrength;
+      float power = max(0.0, brushPower);
+
+      // Speckle the influence so the circle edge isn't visibly “painted”.
+      // Use TWO independent hashes and multiply them to create a sparser point-cloud.
+      vec2 nUV = v_uvs[0] * (resolution.xy * max(0.1, brushNoiseScale));
+      float n1 = hash21(nUV);
+      float n2 = hash21(nUV + vec2(19.19, 7.13));
+      float t = clamp(brushSpeckle, 0.0, 0.95);
+      float speckle = smoothstep(t, 0.95, n1) * smoothstep(t, 0.95, n2);
+      float influence = falloff * speckle * power;
+
+      // Perturbation: decouple delta noise from mask noise to avoid “stamped” structure.
+      float nDelta = hash21(nUV + vec2(3.7, 9.2));
+      float delta = (nDelta - 0.5) * brushDelta * influence;
+      B = clamp(B + delta, 0.0, 1.0);
+      A = clamp(A - 0.5 * delta, 0.0, 1.0);
     }
   }
 
@@ -458,6 +498,9 @@ let renderTargetType = THREE.UnsignedByteType;
 let seedCanvas;
 let seedCtx;
 
+let bgCanvas;
+let bgCtx;
+
 let simWidth = 0;
 let simHeight = 0;
 
@@ -472,6 +515,9 @@ let lastMouseX = -1;
 let lastMouseY = -1;
 let frameCounter = 0;
 
+let warmStartToken = 0;
+let isWarmStarting = false;
+
 const uniforms = {
   simulation: {
     previousIterationTexture: { value: null },
@@ -483,6 +529,10 @@ const uniforms = {
     brushRadius: { value: RD.brushRadius },
     brushFeather: { value: RD.brushFeather },
     brushStrength: { value: 1.0 },
+    brushPower: { value: RD.brushPower },
+    brushNoiseScale: { value: RD.brushNoiseScale },
+    brushSpeckle: { value: RD.brushSpeckle },
+    brushDelta: { value: RD.brushDelta },
     f: { value: RD.f },
     k: { value: RD.k },
     dA: { value: RD.dA },
@@ -529,8 +579,280 @@ function updateImageName(index) {
 }
 
 function setBodyBackground(filename) {
-  // Intentionally no-op (RD renders on the canvas).
-  void filename;
+  if (!bgCanvas || !bgCtx) return;
+  const rec = images.find((r) => r?.filename === filename);
+  const img = rec?.img;
+  if (!img) return;
+  drawCoverImageToBackground(img, bgCanvas.width, bgCanvas.height);
+}
+
+function resizeBackgroundCanvas() {
+  if (!bgCanvas || !bgCtx) return;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  bgCanvas.width = w;
+  bgCanvas.height = h;
+  bgCanvas.style.width = '100%';
+  bgCanvas.style.height = '100%';
+}
+
+function computeAutoLevelsTransform(imageData) {
+  const data = imageData.data;
+  let minL = 1;
+  let maxL = 0;
+
+  // Sample for speed.
+  const step = 16;
+  for (let i = 0; i < data.length; i += 4 * step) {
+    const r = data[i] / 255;
+    const g = data[i + 1] / 255;
+    const b = data[i + 2] / 255;
+    const l = 0.299 * r + 0.587 * g + 0.114 * b;
+    if (l < minL) minL = l;
+    if (l > maxL) maxL = l;
+  }
+
+  // Clamp extremes to avoid blowing out noise.
+  minL = Math.max(0.02, Math.min(0.6, minL));
+  maxL = Math.max(minL + 0.05, Math.min(0.98, maxL));
+  const scale = 1 / (maxL - minL);
+  const offset = -minL * scale;
+  return { scale, offset };
+}
+
+function applyAutoLevelsToCanvas(ctx, width, height, strength = 1.0) {
+  const s = Math.max(0, Math.min(1, strength));
+  if (s <= 0) return;
+
+  const img = ctx.getImageData(0, 0, width, height);
+  const { scale, offset } = computeAutoLevelsTransform(img);
+  const d = img.data;
+
+  for (let i = 0; i < d.length; i += 4) {
+    const or = d[i] / 255;
+    const og = d[i + 1] / 255;
+    const ob = d[i + 2] / 255;
+
+    const tr = Math.max(0, Math.min(1, or * scale + offset));
+    const tg = Math.max(0, Math.min(1, og * scale + offset));
+    const tb = Math.max(0, Math.min(1, ob * scale + offset));
+
+    const rr = or + (tr - or) * s;
+    const gg = og + (tg - og) * s;
+    const bb = ob + (tb - ob) * s;
+
+    d[i] = Math.round(rr * 255);
+    d[i + 1] = Math.round(gg * 255);
+    d[i + 2] = Math.round(bb * 255);
+  }
+
+  ctx.putImageData(img, 0, 0);
+}
+
+function applyVignetteToCanvas(ctx, width, height, strength = 0.65) {
+  const s = Math.max(0, Math.min(1, strength));
+  if (s <= 0) return;
+
+  const img = ctx.getImageData(0, 0, width, height);
+  const d = img.data;
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const maxR = Math.hypot(cx, cy);
+  const inner = 0.55;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = (y * width + x) * 4;
+      const r = d[i];
+      const g = d[i + 1];
+      const b = d[i + 2];
+
+      const t = Math.hypot(x - cx, y - cy) / maxR;
+      const u = Math.max(0, Math.min(1, (t - inner) / (1 - inner)));
+      const smooth = u * u * (3 - 2 * u);
+      const mul = 1 - s * smooth;
+
+      d[i] = Math.round(r * mul);
+      d[i + 1] = Math.round(g * mul);
+      d[i + 2] = Math.round(b * mul);
+    }
+  }
+
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawCoverImageToBackground(imageEl, width, height) {
+  if (!bgCtx || !bgCanvas) return;
+  bgCtx.clearRect(0, 0, width, height);
+
+  const imgW = imageEl.naturalWidth || imageEl.width;
+  const imgH = imageEl.naturalHeight || imageEl.height;
+  if (!imgW || !imgH) return;
+
+  const scale = Math.max(width / imgW, height / imgH);
+  const drawW = imgW * scale;
+  const drawH = imgH * scale;
+  const dx = (width - drawW) / 2;
+  const dy = (height - drawH) / 2;
+
+  bgCtx.save();
+  bgCtx.filter = RD.invertImage ? 'grayscale(1) invert(1)' : 'grayscale(1)';
+  bgCtx.drawImage(imageEl, dx, dy, drawW, drawH);
+  bgCtx.restore();
+
+  if (RD.imageAutoLevels) {
+    applyAutoLevelsToCanvas(bgCtx, width, height, RD.imageAutoLevelsStrength);
+  }
+
+  if (RD.imageVignette) {
+    applyVignetteToCanvas(bgCtx, width, height, RD.imageVignetteStrength);
+  }
+}
+
+function setVignetteEnabled(enabled) {
+  RD.imageVignette = !!enabled;
+}
+
+function setupTabs() {
+  const buttons = Array.from(document.querySelectorAll('.panel-tab-btn'));
+  const panels = Array.from(document.querySelectorAll('.tabbed-panel'));
+  if (!buttons.length || !panels.length) return;
+
+  const activate = (name) => {
+    buttons.forEach((b) => b.classList.toggle('is-active', b.dataset.panel === name));
+    panels.forEach((p) => p.classList.toggle('is-active', p.dataset.panel === name));
+  };
+
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const name = btn.dataset.panel;
+      if (!name) return;
+      activate(name);
+    });
+  });
+
+  const initial = buttons.find((b) => b.classList.contains('is-active'))?.dataset.panel || buttons[0].dataset.panel;
+  if (initial) activate(initial);
+}
+
+function setupBrushPanel() {
+  const toggleBtn = document.getElementById('toggleBrushControls');
+  const content = document.getElementById('brushControlsContent');
+  if (toggleBtn && content) {
+    toggleBtn.addEventListener('click', () => {
+      content.classList.toggle('collapsed');
+      toggleBtn.textContent = content.classList.contains('collapsed') ? '+' : '−';
+    });
+  }
+
+  const prime = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = String(value);
+  };
+  prime('rdBrushPowerSlider', RD.brushPower);
+  prime('rdBrushNoiseScaleSlider', RD.brushNoiseScale);
+  prime('rdBrushSpeckleSlider', RD.brushSpeckle);
+  prime('rdBrushDeltaSlider', RD.brushDelta);
+
+  const bind = (id, valueId, decimals, onValue) => {
+    const slider = document.getElementById(id);
+    const valueEl = document.getElementById(valueId);
+    if (!slider || !valueEl) return;
+
+    const format = (v) => (decimals > 0 ? Number(v).toFixed(decimals) : String(Math.round(v)));
+
+    slider.addEventListener('input', (ev) => {
+      const value = parseFloat(ev.target.value);
+      if (!Number.isFinite(value)) return;
+      onValue(value);
+      valueEl.textContent = format(value);
+    });
+
+    valueEl.textContent = format(parseFloat(slider.value));
+  };
+
+  bind('rdBrushPowerSlider', 'rdBrushPowerValue', 2, (v) => {
+    RD.brushPower = v;
+    uniforms.simulation.brushPower.value = v;
+  });
+
+  bind('rdBrushNoiseScaleSlider', 'rdBrushNoiseScaleValue', 2, (v) => {
+    RD.brushNoiseScale = v;
+    uniforms.simulation.brushNoiseScale.value = v;
+  });
+
+  bind('rdBrushSpeckleSlider', 'rdBrushSpeckleValue', 2, (v) => {
+    RD.brushSpeckle = Math.max(0, Math.min(0.95, v));
+    uniforms.simulation.brushSpeckle.value = RD.brushSpeckle;
+  });
+
+  bind('rdBrushDeltaSlider', 'rdBrushDeltaValue', 3, (v) => {
+    RD.brushDelta = Math.max(0, Math.min(0.25, v));
+    uniforms.simulation.brushDelta.value = RD.brushDelta;
+  });
+}
+
+function setupImagePanel() {
+  const toggleBtn = document.getElementById('toggleImageControls');
+  const content = document.getElementById('imageControlsContent');
+  if (toggleBtn && content) {
+    toggleBtn.addEventListener('click', () => {
+      content.classList.toggle('collapsed');
+      toggleBtn.textContent = content.classList.contains('collapsed') ? '+' : '−';
+    });
+  }
+
+  const vignetteToggle = document.getElementById('imageVignetteToggle');
+  const vignetteStrengthSlider = document.getElementById('imageVignetteStrengthSlider');
+  const vignetteStrengthValue = document.getElementById('imageVignetteStrengthValue');
+  if (vignetteToggle) {
+    vignetteToggle.checked = !!RD.imageVignette;
+    setVignetteEnabled(RD.imageVignette);
+    vignetteToggle.addEventListener('change', () => {
+      setVignetteEnabled(vignetteToggle.checked);
+      setBodyBackground(images[currentImageIndex]?.filename);
+      if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
+    });
+  } else {
+    setVignetteEnabled(RD.imageVignette);
+  }
+
+  if (vignetteStrengthSlider && vignetteStrengthValue) {
+    vignetteStrengthSlider.value = String(RD.imageVignetteStrength);
+    vignetteStrengthValue.textContent = Number(RD.imageVignetteStrength).toFixed(2);
+    vignetteStrengthSlider.addEventListener('input', () => {
+      RD.imageVignetteStrength = Math.max(0, Math.min(1, parseFloat(vignetteStrengthSlider.value)));
+      vignetteStrengthValue.textContent = Number(RD.imageVignetteStrength).toFixed(2);
+      setBodyBackground(images[currentImageIndex]?.filename);
+      if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
+    });
+  }
+
+  const autoToggle = document.getElementById('imageAutoLevelsToggle');
+  const autoStrengthSlider = document.getElementById('imageAutoLevelsStrengthSlider');
+  const autoStrengthValue = document.getElementById('imageAutoLevelsStrengthValue');
+  if (autoToggle) {
+    autoToggle.checked = !!RD.imageAutoLevels;
+    autoToggle.addEventListener('change', () => {
+      RD.imageAutoLevels = !!autoToggle.checked;
+      setBodyBackground(images[currentImageIndex]?.filename);
+      if (renderer && renderTargets.length >= 2) {
+        seedSimulationFromCurrentImage();
+      }
+    });
+  }
+
+  if (autoStrengthSlider && autoStrengthValue) {
+    autoStrengthSlider.value = String(RD.imageAutoLevelsStrength);
+    autoStrengthValue.textContent = Number(RD.imageAutoLevelsStrength).toFixed(2);
+    autoStrengthSlider.addEventListener('input', () => {
+      RD.imageAutoLevelsStrength = Math.max(0, Math.min(1, parseFloat(autoStrengthSlider.value)));
+      autoStrengthValue.textContent = Number(RD.imageAutoLevelsStrength).toFixed(2);
+      setBodyBackground(images[currentImageIndex]?.filename);
+      if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
+    });
+  }
 }
 
 function ensureTitleFontLoaded() {
@@ -544,7 +866,7 @@ function drawTitleOverlay(ctx, width, height) {
 
   const fontPx = (Math.min(width, height) * TITLE.sizePercent) / 100;
   const centerX = width / 2;
-  const centerY = height / 2;
+  const centerY = getTitleCenterY(width, height, fontPx);
 
   ctx.save();
   ctx.font = `${Math.round(fontPx)}px ${TITLE_FONT_FAMILY}, sans-serif`;
@@ -592,6 +914,14 @@ function drawCoverImageToSeed(imageEl, width, height) {
   seedCtx.filter = RD.invertImage ? 'grayscale(1) invert(1)' : 'grayscale(1)';
   seedCtx.drawImage(imageEl, dx, dy, drawW, drawH);
   seedCtx.restore();
+
+  if (RD.imageAutoLevels) {
+    applyAutoLevelsToCanvas(seedCtx, width, height, RD.imageAutoLevelsStrength);
+  }
+
+  if (RD.imageVignette) {
+    applyVignetteToCanvas(seedCtx, width, height, RD.imageVignetteStrength);
+  }
 }
 
 function ensureTitleMaskCanvas(width, height) {
@@ -612,7 +942,7 @@ function updateTitleMaskTexture(width, height) {
   if (TITLE.enabled) {
     const fontPx = (Math.min(width, height) * TITLE.sizePercent) / 100;
     const centerX = width / 2;
-    const centerY = height / 2;
+    const centerY = getTitleCenterY(width, height, fontPx);
 
     ctx.save();
     ctx.font = `${Math.round(fontPx)}px ${TITLE_FONT_FAMILY}, sans-serif`;
@@ -663,7 +993,7 @@ function getTitleMaskPixels(width, height) {
   const ctx = titleMaskCtx;
   const fontPx = (Math.min(width, height) * TITLE.sizePercent) / 100;
   const centerX = width / 2;
-  const centerY = height / 2;
+  const centerY = getTitleCenterY(width, height, fontPx);
 
   ctx.save();
   ctx.font = `${Math.round(fontPx)}px ${TITLE_FONT_FAMILY}, sans-serif`;
@@ -736,6 +1066,93 @@ function warmStartSimulation(iterations) {
   renderer.setRenderTarget(null);
 }
 
+async function warmStartSimulationAsync(iterations, token) {
+  if (!renderer || !materials.simulation || renderTargets.length < 2) return;
+  const iters = Math.max(0, Math.floor(iterations || 0));
+  if (iters === 0) return;
+
+  isWarmStarting = true;
+
+  const chunkSize = 24;
+  let remaining = iters;
+
+  while (remaining > 0) {
+    if (token !== warmStartToken) break;
+    const run = Math.min(chunkSize, remaining);
+
+    mesh.material = materials.simulation;
+    for (let i = 0; i < run; i++) {
+      const nextIndex = (currentRT + 1) % 2;
+      uniforms.simulation.previousIterationTexture.value = renderTargets[currentRT].texture;
+
+      renderer.setRenderTarget(renderTargets[nextIndex]);
+      renderer.render(scene, camera);
+      currentRT = nextIndex;
+    }
+    renderer.setRenderTarget(null);
+
+    remaining -= run;
+    // Yield so the browser can paint UI and the first effect appears sooner.
+    await new Promise(requestAnimationFrame);
+  }
+
+  isWarmStarting = false;
+}
+
+function createImageRecord(filename) {
+  return { filename, img: null, loaded: false, loading: false };
+}
+
+function loadImageAtIndex(index) {
+  const rec = images[index];
+  if (!rec) return Promise.resolve(null);
+  if (rec.loaded && rec.img) return Promise.resolve(rec);
+  if (rec.loading) {
+    return new Promise((resolve, reject) => {
+      const poll = () => {
+        if (rec.loaded && rec.img) resolve(rec);
+        else if (!rec.loading && !rec.loaded) reject(new Error('Image failed to load'));
+        else requestAnimationFrame(poll);
+      };
+      poll();
+    });
+  }
+
+  rec.loading = true;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = 'async';
+    img.onload = () => {
+      rec.img = img;
+      rec.loaded = true;
+      rec.loading = false;
+      resolve(rec);
+    };
+    img.onerror = (e) => {
+      rec.loading = false;
+      rec.loaded = false;
+      reject(e);
+    };
+    img.src = `../../_img/${rec.filename}`;
+  });
+}
+
+function startBackgroundImageLoading() {
+  // Load the rest lazily so first paint is fast.
+  (async () => {
+    for (let i = 0; i < images.length; i++) {
+      if (i === currentImageIndex) continue;
+      if (images[i]?.loaded) continue;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await loadImageAtIndex(i);
+      } catch {
+        // ignore individual image failures
+      }
+    }
+  })();
+}
+
 function seedSimulationFromCurrentImage() {
   if (!images.length || !renderer || renderTargets.length < 2) return;
 
@@ -751,8 +1168,16 @@ function seedSimulationFromCurrentImage() {
   seedCanvas.width = width;
   seedCanvas.height = height;
 
-  const img = images[currentImageIndex].img;
-  drawCoverImageToSeed(img, width, height);
+  const img = images[currentImageIndex]?.img;
+  if (img) {
+    drawCoverImageToSeed(img, width, height);
+  } else {
+    // Title-first: start with a neutral background so the title effect can appear immediately.
+    seedCtx.save();
+    seedCtx.fillStyle = '#000000';
+    seedCtx.fillRect(0, 0, width, height);
+    seedCtx.restore();
+  }
   drawTitleOverlay(seedCtx, width, height);
 
   // Keep the title visually "on top" by preventing brush influence within the title mask.
@@ -787,7 +1212,8 @@ function seedSimulationFromCurrentImage() {
   renderer.setRenderTarget(null);
   currentRT = 0;
 
-  warmStartSimulation(RD.warmStartIterations);
+  warmStartToken += 1;
+  void warmStartSimulationAsync(RD.warmStartIterations, warmStartToken);
 }
 
 function setupThree(canvas) {
@@ -834,6 +1260,11 @@ function setupThree(canvas) {
   const handleResize = async () => {
     const width = window.innerWidth;
     const height = window.innerHeight;
+
+    resizeBackgroundCanvas();
+    if (images?.length) {
+      setBodyBackground(images[currentImageIndex]?.filename);
+    }
 
     renderer.setSize(width, height);
     simWidth = Math.max(2, Math.round(width * RD.simScale));
@@ -892,6 +1323,13 @@ function setupThree(canvas) {
 
     pointerActiveOnCanvas = true;
     lastPointerMoveMs = performance.now();
+
+    // Movement deadzone to prevent stationary flicker from tiny pointer jitter.
+    const dx = lastMouseX < 0 ? 1 : (x - lastMouseX);
+    const dy = lastMouseY < 0 ? 1 : (y - lastMouseY);
+    const distSq = dx * dx + dy * dy;
+    const moved = distSq > 0.0000008; // tuned for normalized [0..1] coords
+
     lastMouseX = x;
     lastMouseY = y;
 
@@ -900,8 +1338,8 @@ function setupThree(canvas) {
       uniforms.display.mousePosition.value.set(x, y);
     }
 
-    // Apply brush only on frames where the mouse actually moved.
-    mouseMovedThisFrame = true;
+    // Apply brush only on real movement frames (no idle blink).
+    mouseMovedThisFrame = moved;
   };
 
   const handlePointerLeave = () => {
@@ -919,6 +1357,18 @@ function setupThree(canvas) {
   let raf = 0;
   const animate = (time) => {
     frameCounter++;
+
+    // During warm start, let the async seeding advance the sim; only render the current RT.
+    if (isWarmStarting) {
+      uniforms.display.textureToDisplay.value = renderTargets[currentRT]?.texture ?? null;
+      uniforms.display.previousIterationTexture.value = renderTargets[(currentRT + 1) % 2]?.texture ?? null;
+      uniforms.display.time.value = time * 0.001;
+      mesh.material = materials.display;
+      renderer.setRenderTarget(null);
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(animate);
+      return;
+    }
 
     // If showing original, pause simulation/rendering (overlay handles visuals).
     if (RD.showOriginal) {
@@ -988,18 +1438,36 @@ function setupThree(canvas) {
 }
 
 async function loadImages() {
-  const loaded = await Promise.all(
-    IMAGES.map((filename) => new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ filename, img });
-      img.onerror = reject;
-      img.src = `../../_img/${filename}`;
-    }))
-  );
-  return loaded;
+  // Keep a stable list; load lazily for faster first paint.
+  images = IMAGES.map((filename) => createImageRecord(filename));
+  await loadImageAtIndex(currentImageIndex);
+  startBackgroundImageLoading();
+  return images;
 }
 
 function setupEffectsPanel() {
+  // Prime UI inputs from saved defaults BEFORE binding, otherwise bindSlider()
+  // will overwrite RD/COLORS with the hardcoded HTML defaults.
+  const prime = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = String(value);
+  };
+  prime('rdFSlider', RD.f);
+  prime('rdKSlider', RD.k);
+  prime('rdDASlider', RD.dA);
+  prime('rdDBSlider', RD.dB);
+  prime('rdTimestepSlider', RD.timestep);
+  prime('rdStepsSlider', RD.stepsPerFrame);
+  prime('rdBrushRadiusSlider', RD.brushRadius);
+  prime('rdBrushFeatherSlider', RD.brushFeather);
+  prime('rdStyleSlider', RD.renderingStyle);
+  prime('rdBiasXSlider', RD.biasX);
+  prime('rdBiasYSlider', RD.biasY);
+  prime('rdWarmStartSlider', RD.warmStartIterations);
+  prime('rdSourceStrengthSlider', RD.sourceStrength);
+  prime('rdSourceStrengthNumber', RD.sourceStrength);
+  prime('rdSimScaleSlider', RD.simScale);
+
   const toggleBtn = document.getElementById('toggleControls');
   const controlsContent = document.getElementById('controlsContent');
   if (toggleBtn && controlsContent) {
@@ -1331,6 +1799,19 @@ function setupEffectsPanel() {
     duoToneWhiteInput.addEventListener('input', () => setDuoToneColor('white', duoToneWhiteInput.value));
   }
 
+  // Invert duo-tone colors button
+  const invertDuoToneBtn = document.getElementById('invertDuoToneBtn');
+  if (invertDuoToneBtn) {
+    invertDuoToneBtn.addEventListener('click', () => {
+      const prevBlack = COLORS.duoToneBlack;
+      const prevWhite = COLORS.duoToneWhite;
+      setDuoToneColor('black', prevWhite);
+      setDuoToneColor('white', prevBlack);
+      if (duoToneBlackInput) duoToneBlackInput.value = COLORS.duoToneBlack;
+      if (duoToneWhiteInput) duoToneWhiteInput.value = COLORS.duoToneWhite;
+    });
+  }
+
   const reseedBtn = document.getElementById('rdReseedBtn');
   if (reseedBtn) {
     reseedBtn.addEventListener('click', () => {
@@ -1427,6 +1908,7 @@ function setupEffectsPanel() {
     // Title UI sync
     if (titleTextInput) titleTextInput.value = TITLE.text;
     if (titleShowToggle) titleShowToggle.checked = !!TITLE.enabled;
+    if (titlePositionSelect) titlePositionSelect.value = TITLE.position || 'center';
     if (titleSizeSlider) titleSizeSlider.value = String(TITLE.sizePercent);
     if (titleSizeValue) titleSizeValue.textContent = String(TITLE.sizePercent);
     if (titleFillColor) titleFillColor.value = TITLE.fillColor;
@@ -1482,6 +1964,7 @@ function setupEffectsPanel() {
 
   const titleTextInput = document.getElementById('titleTextInput');
   const titleShowToggle = document.getElementById('titleShowToggle');
+  const titlePositionSelect = document.getElementById('titlePositionSelect');
 
   const titleSizeSlider = document.getElementById('titleSizeSlider');
   const titleSizeValue = document.getElementById('titleSizeValue');
@@ -1506,6 +1989,7 @@ function setupEffectsPanel() {
 
   if (titleTextInput) titleTextInput.value = TITLE.text;
   if (titleShowToggle) titleShowToggle.checked = TITLE.enabled;
+  if (titlePositionSelect) titlePositionSelect.value = TITLE.position || 'center';
 
   if (titleSizeSlider && titleSizeValue) {
     titleSizeSlider.value = String(TITLE.sizePercent);
@@ -1553,6 +2037,14 @@ function setupEffectsPanel() {
   if (titleShowToggle) {
     titleShowToggle.addEventListener('change', async (e) => {
       TITLE.enabled = e.target.checked;
+      await resetFromTitle();
+    });
+  }
+
+  if (titlePositionSelect) {
+    titlePositionSelect.addEventListener('change', async (e) => {
+      const v = String(e.target.value || 'center');
+      TITLE.position = (v === 'top' || v === 'bottom' || v === 'center') ? v : 'center';
       await resetFromTitle();
     });
   }
@@ -1642,9 +2134,13 @@ function setupImageRolling() {
 
   const changeImage = async (dir) => {
     currentImageIndex = (currentImageIndex + dir + images.length) % images.length;
+    try {
+      await loadImageAtIndex(currentImageIndex);
+    } catch {
+      // If load fails, still allow background change; seed will fall back to title-only.
+    }
     updateImageName(currentImageIndex);
     setBodyBackground(images[currentImageIndex].filename);
-    updateOriginalOverlay();
     await ensureTitleFontLoaded();
     seedSimulationFromCurrentImage();
   };
@@ -1665,10 +2161,11 @@ function setupImageRolling() {
   // Invert image button
   const invertImageBtn = document.getElementById('invertImageBtn');
   if (invertImageBtn) {
+    invertImageBtn.textContent = RD.invertImage ? 'Revert Image' : 'Invert Image';
     invertImageBtn.addEventListener('click', () => {
       RD.invertImage = !RD.invertImage;
       invertImageBtn.textContent = RD.invertImage ? 'Revert Image' : 'Invert Image';
-      updateOriginalOverlay();
+      setBodyBackground(images[currentImageIndex]?.filename);
       seedSimulationFromCurrentImage();
     });
   }
@@ -1686,6 +2183,10 @@ function setupImageRolling() {
           timestep: RD.timestep,
           brushRadius: RD.brushRadius,
           brushFeather: RD.brushFeather,
+          brushPower: RD.brushPower,
+          brushNoiseScale: RD.brushNoiseScale,
+          brushSpeckle: RD.brushSpeckle,
+          brushDelta: RD.brushDelta,
           stepsPerFrame: RD.stepsPerFrame,
           renderingStyle: RD.renderingStyle,
           warmStartIterations: RD.warmStartIterations,
@@ -1694,6 +2195,10 @@ function setupImageRolling() {
           biasY: RD.biasY,
           sourceStrength: RD.sourceStrength,
           invertImage: RD.invertImage,
+          imageVignette: RD.imageVignette,
+          imageVignetteStrength: RD.imageVignetteStrength,
+          imageAutoLevels: RD.imageAutoLevels,
+          imageAutoLevelsStrength: RD.imageAutoLevelsStrength,
           showOriginal: false,
         },
         COLORS: {
@@ -1714,6 +2219,7 @@ function setupImageRolling() {
         TITLE: {
           text: TITLE.text,
           enabled: TITLE.enabled,
+          position: TITLE.position,
           sizePercent: TITLE.sizePercent,
           fillColor: TITLE.fillColor,
           strokeColor: TITLE.strokeColor,
@@ -1762,23 +2268,20 @@ async function main() {
   const canvas = document.getElementById('canvas');
   if (!canvas) throw new Error('Missing #canvas');
 
+  bgCanvas = document.getElementById('bgCanvas');
+  if (bgCanvas) {
+    bgCtx = bgCanvas.getContext('2d', { willReadFrequently: true });
+    resizeBackgroundCanvas();
+  }
+
   images = await loadImages();
   updateImageName(currentImageIndex);
   setBodyBackground(images[currentImageIndex].filename);
 
-  const hidden = document.getElementById('hiddenImages');
-  if (hidden) {
-    hidden.innerHTML = '';
-    images.forEach(({ filename }) => {
-      const img = document.createElement('img');
-      img.className = 'source-img';
-      img.alt = filename;
-      img.src = `../../_img/${filename}`;
-      hidden.appendChild(img);
-    });
-  }
-
+  setupTabs();
   setupEffectsPanel();
+  setupBrushPanel();
+  setupImagePanel();
   setupImageRolling();
 
   // Global UI hide/show toggle

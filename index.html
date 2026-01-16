@@ -12,6 +12,10 @@
     <button id="uiToggleBtn" title="Hide/Show UI" style="font-family: 'Courier New', Courier, monospace; font-size:12px; color:#fff; background-color: rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); padding:6px 10px; border-radius:6px; cursor:pointer;">UI</button>
   </div>
 
+  <!-- Background image layer (processed in JS) -->
+  <canvas id="bgCanvas" aria-hidden="true"></canvas>
+  <div id="vignetteOverlay" class="vignette-overlay" aria-hidden="true"></div>
+
   <!-- Original image overlay (used for Show Original) -->
   <img id="originalOverlay" class="original-overlay" alt="" />
 
@@ -28,8 +32,15 @@
 
   <!-- Parameter Controls (two sibling panels) -->
   <div class="panel-stack">
+    <div class="panel-tabs">
+      <button class="panel-tab-btn is-active" type="button" data-panel="effects">Effect</button>
+      <button class="panel-tab-btn" type="button" data-panel="brush">Brush</button>
+      <button class="panel-tab-btn" type="button" data-panel="image">Image</button>
+      <button class="panel-tab-btn" type="button" data-panel="title">Title</button>
+    </div>
+
     <!-- EFFECT CONTROLS -->
-    <div class="slider-controls">
+    <div class="slider-controls tabbed-panel is-active" data-panel="effects">
       <div class="controls-header">
         <span class="controls-title">EFFECT CONTROLS</span>
         <button id="toggleControls" class="toggle-btn">−</button>
@@ -85,22 +96,6 @@
         </div>
 
         <div class="control-section">
-          <div class="section-title">Brush</div>
-
-          <div class="slider-group">
-            <label for="rdBrushRadiusSlider" class="slider-label">Radius</label>
-            <input type="range" id="rdBrushRadiusSlider" class="slider" min="5" max="400" value="100" step="1">
-            <span id="rdBrushRadiusValue" class="slider-value">100</span>
-          </div>
-
-          <div class="slider-group">
-            <label for="rdBrushFeatherSlider" class="slider-label">Edge</label>
-            <input type="range" id="rdBrushFeatherSlider" class="slider" min="0" max="1" value="0.5" step="0.01">
-            <span id="rdBrushFeatherValue" class="slider-value">0.50</span>
-          </div>
-        </div>
-
-        <div class="control-section">
           <div class="section-title">Display</div>
 
           <div class="slider-group">
@@ -112,10 +107,6 @@
           <div class="slider-group">
             <label class="slider-label">Name</label>
             <span id="rdStyleName" class="slider-value" style="min-width: auto; text-align: left;">Duo Tone Sharp</span>
-          </div>
-
-          <div class="toggle-group">
-            <button id="invertImageBtn" class="invert-btn">Invert Image</button>
           </div>
 
           <!-- Threshold controls (only visible for B/W Sharp) -->
@@ -137,6 +128,10 @@
               <input type="color" id="rdDuoToneWhite" class="color-input" value="#ffffff">
               <span id="rdDuoToneWhiteValue" class="slider-value">#ffffff</span>
             </div>
+
+                    <div class="toggle-group">
+                      <button id="invertDuoToneBtn" class="invert-btn" type="button">Invert Colors</button>
+                    </div>
           </div>
         </div>
 
@@ -265,8 +260,102 @@
       </div>
     </div>
 
+    <!-- BRUSH CONTROLS -->
+    <div class="slider-controls tabbed-panel" data-panel="brush">
+      <div class="controls-header">
+        <span class="controls-title">BRUSH CONTROLS</span>
+        <button id="toggleBrushControls" class="toggle-btn">−</button>
+      </div>
+
+      <div id="brushControlsContent" class="controls-content">
+        <div class="control-section">
+          <div class="section-title">Brush</div>
+
+          <div class="slider-group">
+            <label for="rdBrushRadiusSlider" class="slider-label">Radius</label>
+            <input type="range" id="rdBrushRadiusSlider" class="slider" min="5" max="400" value="100" step="1">
+            <span id="rdBrushRadiusValue" class="slider-value">100</span>
+          </div>
+
+          <div class="slider-group">
+            <label for="rdBrushFeatherSlider" class="slider-label">Edge</label>
+            <input type="range" id="rdBrushFeatherSlider" class="slider" min="0" max="1" value="0.5" step="0.01">
+            <span id="rdBrushFeatherValue" class="slider-value">0.50</span>
+          </div>
+
+          <div class="slider-group">
+            <label for="rdBrushPowerSlider" class="slider-label">Power</label>
+            <input type="range" id="rdBrushPowerSlider" class="slider" min="0" max="3" value="1" step="0.01">
+            <span id="rdBrushPowerValue" class="slider-value">1.00</span>
+          </div>
+
+          <div class="slider-group">
+            <label for="rdBrushNoiseScaleSlider" class="slider-label">Noise</label>
+            <input type="range" id="rdBrushNoiseScaleSlider" class="slider" min="0.2" max="4" value="1" step="0.01">
+            <span id="rdBrushNoiseScaleValue" class="slider-value">1.00</span>
+          </div>
+
+          <div class="slider-group">
+            <label for="rdBrushSpeckleSlider" class="slider-label">Speckle</label>
+            <input type="range" id="rdBrushSpeckleSlider" class="slider" min="0" max="0.95" value="0.25" step="0.01">
+            <span id="rdBrushSpeckleValue" class="slider-value">0.25</span>
+          </div>
+
+          <div class="slider-group">
+            <label for="rdBrushDeltaSlider" class="slider-label">Delta</label>
+            <input type="range" id="rdBrushDeltaSlider" class="slider" min="0" max="0.25" value="0.06" step="0.005">
+            <span id="rdBrushDeltaValue" class="slider-value">0.06</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IMAGE CONTROLS -->
+    <div class="slider-controls tabbed-panel" data-panel="image">
+      <div class="controls-header">
+        <span class="controls-title">IMAGE CONTROLS</span>
+        <button id="toggleImageControls" class="toggle-btn">−</button>
+      </div>
+
+      <div id="imageControlsContent" class="controls-content">
+        <div class="control-section">
+          <div class="section-title">Image</div>
+
+          <div class="toggle-group">
+            <button id="invertImageBtn" class="invert-btn" type="button">Invert Image</button>
+          </div>
+
+          <div class="toggle-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="imageVignetteToggle">
+              Vignette
+            </label>
+          </div>
+
+          <div class="slider-group">
+            <label for="imageVignetteStrengthSlider" class="slider-label">Vignette strength</label>
+            <input type="range" id="imageVignetteStrengthSlider" class="slider" min="0" max="1" value="0.65" step="0.01">
+            <span id="imageVignetteStrengthValue" class="slider-value">0.65</span>
+          </div>
+
+          <div class="toggle-group">
+            <label class="toggle-label">
+              <input type="checkbox" id="imageAutoLevelsToggle">
+              Auto Levels
+            </label>
+          </div>
+
+          <div class="slider-group">
+            <label for="imageAutoLevelsStrengthSlider" class="slider-label">Auto-level strength</label>
+            <input type="range" id="imageAutoLevelsStrengthSlider" class="slider" min="0" max="1" value="1" step="0.01">
+            <span id="imageAutoLevelsStrengthValue" class="slider-value">1.00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- TITLE CONTROL -->
-    <div class="slider-controls">
+    <div class="slider-controls tabbed-panel" data-panel="title">
       <div class="controls-header">
         <span class="controls-title">TITLE CONTROL</span>
         <button id="toggleTitleControls" class="toggle-btn">−</button>
@@ -286,6 +375,15 @@
               <input type="checkbox" id="titleShowToggle" checked>
               Show
             </label>
+          </div>
+
+          <div class="slider-group">
+            <label for="titlePositionSelect" class="slider-label">Position</label>
+            <select id="titlePositionSelect" class="text-input">
+              <option value="center">Center</option>
+              <option value="top">Top</option>
+              <option value="bottom">Bottom</option>
+            </select>
           </div>
 
           <div class="slider-group">
