@@ -12,26 +12,11 @@
         <button id="uiToggleBtn" title="Hide/Show UI" style="font-family: 'Courier New', Courier, monospace; font-size:12px; color:#fff; background-color: rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); padding:6px 10px; border-radius:6px; cursor:pointer;">UI</button>
     </div>
 
+    <!-- Original image overlay (used for Show Original) -->
+    <img id="originalOverlay" class="original-overlay" alt="" />
+
     <!-- Canvas for rendering effect -->
     <canvas id="canvas"></canvas>
-
-    <!-- Brush indicator -->
-    <div id="brushIndicator"></div>
-
-    <!-- Effect Tabs (top-left) -->
-    <div class="effects-tabs">
-        <div class="effects-header">
-            <span class="effects-title">EFFECTS</span>
-        </div>
-        <div class="effects-content">
-            <a class="effects-link" href="../image-metaballs/">1. Metaball</a>
-            <a class="effects-link" href="../rd-01/">2. RD-01</a>
-            <a class="effects-link" href="../rd-02/">3. RD-02</a>
-            <a class="effects-link" href="../rd-04/">4. RD-04</a>
-            <a class="effects-link" href="../rd-05/">5. RD-05</a>
-            <a class="effects-link active" href="../rd-06/">6. RD-06</a>
-        </div>
-    </div>
 
     <!-- Controls -->
     <div class="controls">

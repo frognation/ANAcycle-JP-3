@@ -27,8 +27,28 @@ body {
     left: 0;
     width: 100%;
     height: 100%;
-    cursor: none;
+    cursor: default;
     z-index: 1;
+}
+
+/* Original image overlay (shown when toggling "Show Original") */
+.original-overlay {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 0;
+    display: none;
+    pointer-events: none;
+}
+
+body.show-original .original-overlay {
+    display: block;
+}
+
+body.show-original #canvas {
+    opacity: 0;
 }
 
 /* Controls */
@@ -350,66 +370,6 @@ body {
     display: none;
 }
 
-/* Effect Tabs (top-left) */
-.effects-tabs {
-    position: fixed;
-    top: 30px;
-    left: 30px;
-    background-color: rgba(0, 0, 0, 0.85);
-    border-radius: 8px;
-    z-index: 10;
-    backdrop-filter: blur(10px);
-    min-width: 200px;
-    max-width: 240px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-}
-
-.effects-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 12px 16px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.effects-title {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 13px;
-    font-weight: bold;
-    color: #fff;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-}
-
-.effects-content {
-    padding: 10px 10px 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.effects-link {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 12px;
-    color: #fff;
-    text-decoration: none;
-    background-color: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.15);
-    padding: 8px 10px;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.effects-link:hover {
-    background-color: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.25);
-}
-
-.effects-link.active {
-    background-color: rgba(74, 158, 255, 0.18);
-    border-color: rgba(74, 158, 255, 0.55);
-}
 
 /* Persistent UI toggle button */
 .ui-toggle {
@@ -438,22 +398,8 @@ body {
 
 /* Hide all UI panels when body has ui-hidden */
 .ui-hidden .panel-stack,
-.ui-hidden .effects-tabs,
 .ui-hidden .controls {
     display: none !important;
-}
-
-/* Brush indicator */
-#brushIndicator {
-    position: fixed;
-    border: 2px solid rgba(255, 255, 255, 0.8);
-    border-radius: 50%;
-    pointer-events: none;
-    z-index: 10000;
-    transform: translate(-50%, -50%);
-    display: none;
-    background-color: rgba(255, 255, 255, 0.05);
-    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3);
 }
 
 /* Save Default Button */

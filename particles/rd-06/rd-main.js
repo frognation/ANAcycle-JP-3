@@ -78,6 +78,8 @@ const RD = {
   showOriginal: false,
 };
 
+const DEFAULTS_STORAGE_KEY = 'rd-06-defaults-v1';
+
 const COLORS = {
   // Gradient (style 1)
   color1: '#000000', stop1: 0.0,
@@ -99,58 +101,59 @@ const COLORS = {
   hslLuminosity: 0.5,
 };
 
+function applySavedDefaults() {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_STORAGE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return;
+
+    const applySubset = (target, source, allowedKeys) => {
+      if (!source || typeof source !== 'object') return;
+      allowedKeys.forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+          target[key] = source[key];
+        }
+      });
+    };
+
+    applySubset(RD, saved.RD, [
+      'f', 'k', 'dA', 'dB', 'timestep', 'brushRadius', 'brushFeather', 'stepsPerFrame',
+      'renderingStyle', 'warmStartIterations', 'simScale', 'biasX', 'biasY', 'sourceStrength',
+      'invertImage',
+    ]);
+    applySubset(COLORS, saved.COLORS, [
+      'color1', 'stop1', 'color2', 'stop2', 'color3', 'stop3', 'color4', 'stop4', 'color5', 'stop5',
+      'duoToneBlack', 'duoToneWhite',
+      'hslFromMin', 'hslFromMax', 'hslToMin', 'hslToMax', 'hslSaturation', 'hslLuminosity',
+    ]);
+    applySubset(TITLE, saved.TITLE, [
+      'text', 'enabled', 'sizePercent', 'fillColor', 'strokeColor', 'strokeWidth',
+      'shadowEnabled', 'shadowColor', 'shadowBlur', 'shadowOffsetX', 'shadowOffsetY',
+    ]);
+  } catch {
+    // ignore invalid stored defaults
+  }
+}
+
+applySavedDefaults();
+
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
 
-function updateBrushIndicator(x, y) {
-  const indicator = document.getElementById('brushIndicator');
-  if (!indicator) return;
-
-  indicator.style.left = x + 'px';
-  indicator.style.top = y + 'px';
-  indicator.style.width = (RD.brushRadius * 2) + 'px';
-  indicator.style.height = (RD.brushRadius * 2) + 'px';
-  indicator.style.display = 'block';
+function updateOriginalOverlay() {
+  const overlay = document.getElementById('originalOverlay');
+  if (!overlay) return;
+  const img = images[currentImageIndex]?.img;
+  if (!img) return;
+  overlay.src = img.src;
+  overlay.style.filter = RD.invertImage ? 'invert(1)' : 'none';
 }
 
-function drawOriginalImage() {
-  const canvas = document.getElementById('canvas');
-  if (!canvas) return;
-
-  const ctx = canvas.getContext('2d');
-  const img = loadedImages[currentImageIndex];
-  if (!img || !img.complete) return;
-
-  // Clear canvas
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  // Calculate image dimensions to fit viewport (cover fit)
-  const imgAspect = img.naturalWidth / img.naturalHeight;
-  const canvasAspect = canvas.width / canvas.height;
-
-  let drawWidth, drawHeight, offsetX, offsetY;
-
-  if (canvasAspect > imgAspect) {
-    drawWidth = canvas.width;
-    drawHeight = drawWidth / imgAspect;
-    offsetX = 0;
-    offsetY = (canvas.height - drawHeight) / 2;
-  } else {
-    drawHeight = canvas.height;
-    drawWidth = drawHeight * imgAspect;
-    offsetX = (canvas.width - drawWidth) / 2;
-    offsetY = 0;
-  }
-
-  // Draw image
-  ctx.save();
-  if (RD.invertImage) {
-    ctx.filter = 'invert(1)';
-  }
-  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
-  ctx.restore();
+function setOriginalOverlayVisible(visible) {
+  document.body.classList.toggle('show-original', !!visible);
+  if (visible) updateOriginalOverlay();
 }
 
 // ============================================
@@ -864,7 +867,7 @@ function setupThree(canvas) {
 
   const shouldIgnorePointer = (targetEl) => {
     if (!targetEl || !targetEl.closest) return false;
-    return !!targetEl.closest('.panel-stack, .effects-tabs, .controls, .ui-toggle');
+    return !!targetEl.closest('.panel-stack, .controls, .ui-toggle');
   };
 
   const handlePointerMove = (e) => {
@@ -894,9 +897,6 @@ function setupThree(canvas) {
 
     // Apply brush only on frames where the mouse actually moved.
     mouseMovedThisFrame = true;
-
-    // Update brush indicator
-    updateBrushIndicator(e.clientX, e.clientY);
   };
 
   const handlePointerLeave = () => {
@@ -906,10 +906,6 @@ function setupThree(canvas) {
       uniforms.display.mousePosition.value.set(-1, -1);
     }
     mouseMovedThisFrame = false;
-
-    // Hide brush indicator
-    const indicator = document.getElementById('brushIndicator');
-    if (indicator) indicator.style.display = 'none';
   };
 
   window.addEventListener('pointermove', handlePointerMove);
@@ -919,19 +915,16 @@ function setupThree(canvas) {
   const animate = (time) => {
     frameCounter++;
 
-    // If showing original, skip simulation and just draw the image
+    // If showing original, pause simulation/rendering (overlay handles visuals).
     if (RD.showOriginal) {
-      drawOriginalImage();
+      uniforms.simulation.brushStrength.value = 0.0;
       raf = requestAnimationFrame(animate);
       return;
     }
 
-    // Prevent "wiping": only apply brush on mouse-move frames,
-    // and only for a single simulation step.
-    // If the mouse is idle but still on the canvas, apply gently at a lower rate.
-    const idleMs = time - lastPointerMoveMs;
-    const idleApply = pointerActiveOnCanvas && !mouseMovedThisFrame && idleMs >= 0;
-    const applyBrushThisFrame = (pointerActiveOnCanvas && mouseMovedThisFrame) || (idleApply && (frameCounter % 4 === 0));
+    // Prevent "wiping" and flicker: apply brush only on real pointer movement frames.
+    void time;
+    const applyBrushThisFrame = pointerActiveOnCanvas && mouseMovedThisFrame;
 
     if (!pointerActiveOnCanvas || !applyBrushThisFrame) {
       uniforms.simulation.mousePosition.value.set(-1, -1);
@@ -944,7 +937,7 @@ function setupThree(canvas) {
       if (uniforms.display && uniforms.display.mousePosition) {
         uniforms.display.mousePosition.value.set(lastMouseX, lastMouseY);
       }
-      uniforms.simulation.brushStrength.value = mouseMovedThisFrame ? 1.0 : 0.15;
+      uniforms.simulation.brushStrength.value = 1.0;
     }
 
     mesh.material = materials.simulation;
@@ -1646,6 +1639,7 @@ function setupImageRolling() {
     currentImageIndex = (currentImageIndex + dir + images.length) % images.length;
     updateImageName(currentImageIndex);
     setBodyBackground(images[currentImageIndex].filename);
+    updateOriginalOverlay();
     await ensureTitleFontLoaded();
     seedSimulationFromCurrentImage();
   };
@@ -1659,6 +1653,7 @@ function setupImageRolling() {
     toggleOriginalBtn.addEventListener('click', () => {
       RD.showOriginal = !RD.showOriginal;
       toggleOriginalBtn.textContent = RD.showOriginal ? 'Show Effect' : 'Show Original';
+      setOriginalOverlayVisible(RD.showOriginal);
     });
   }
 
@@ -1668,6 +1663,7 @@ function setupImageRolling() {
     invertImageBtn.addEventListener('click', () => {
       RD.invertImage = !RD.invertImage;
       invertImageBtn.textContent = RD.invertImage ? 'Revert Image' : 'Invert Image';
+      updateOriginalOverlay();
       seedSimulationFromCurrentImage();
     });
   }
@@ -1676,71 +1672,76 @@ function setupImageRolling() {
   const saveDefaultBtn = document.getElementById('saveDefaultBtn');
   if (saveDefaultBtn) {
     saveDefaultBtn.addEventListener('click', () => {
-      const configCode = `// RD Configuration
-const RD = {
-  f: ${RD.f},
-  k: ${RD.k},
-  dA: ${RD.dA},
-  dB: ${RD.dB},
-  timestep: ${RD.timestep},
-  brushRadius: ${RD.brushRadius},
-  brushFeather: ${RD.brushFeather},
-  stepsPerFrame: ${RD.stepsPerFrame},
-  renderingStyle: ${RD.renderingStyle},
-  warmStartIterations: ${RD.warmStartIterations},
-  simScale: ${RD.simScale},
-  biasX: ${RD.biasX},
-  biasY: ${RD.biasY},
-  sourceStrength: ${RD.sourceStrength},
-  invertImage: ${RD.invertImage},
-  showOriginal: ${RD.showOriginal},
-};
+      const defaultsPayload = {
+        RD: {
+          f: RD.f,
+          k: RD.k,
+          dA: RD.dA,
+          dB: RD.dB,
+          timestep: RD.timestep,
+          brushRadius: RD.brushRadius,
+          brushFeather: RD.brushFeather,
+          stepsPerFrame: RD.stepsPerFrame,
+          renderingStyle: RD.renderingStyle,
+          warmStartIterations: RD.warmStartIterations,
+          simScale: RD.simScale,
+          biasX: RD.biasX,
+          biasY: RD.biasY,
+          sourceStrength: RD.sourceStrength,
+          invertImage: RD.invertImage,
+          showOriginal: false,
+        },
+        COLORS: {
+          color1: COLORS.color1, stop1: COLORS.stop1,
+          color2: COLORS.color2, stop2: COLORS.stop2,
+          color3: COLORS.color3, stop3: COLORS.stop3,
+          color4: COLORS.color4, stop4: COLORS.stop4,
+          color5: COLORS.color5, stop5: COLORS.stop5,
+          duoToneBlack: COLORS.duoToneBlack,
+          duoToneWhite: COLORS.duoToneWhite,
+          hslFromMin: COLORS.hslFromMin,
+          hslFromMax: COLORS.hslFromMax,
+          hslToMin: COLORS.hslToMin,
+          hslToMax: COLORS.hslToMax,
+          hslSaturation: COLORS.hslSaturation,
+          hslLuminosity: COLORS.hslLuminosity,
+        },
+        TITLE: {
+          text: TITLE.text,
+          enabled: TITLE.enabled,
+          sizePercent: TITLE.sizePercent,
+          fillColor: TITLE.fillColor,
+          strokeColor: TITLE.strokeColor,
+          strokeWidth: TITLE.strokeWidth,
+          shadowEnabled: TITLE.shadowEnabled,
+          shadowColor: TITLE.shadowColor,
+          shadowBlur: TITLE.shadowBlur,
+          shadowOffsetX: TITLE.shadowOffsetX,
+          shadowOffsetY: TITLE.shadowOffsetY,
+        },
+      };
 
-const COLORS = {
-  color1: '${COLORS.color1}', stop1: ${COLORS.stop1},
-  color2: '${COLORS.color2}', stop2: ${COLORS.stop2},
-  color3: '${COLORS.color3}', stop3: ${COLORS.stop3},
-  color4: '${COLORS.color4}', stop4: ${COLORS.stop4},
-  color5: '${COLORS.color5}', stop5: ${COLORS.stop5},
-  duoToneBlack: '${COLORS.duoToneBlack}',
-  duoToneWhite: '${COLORS.duoToneWhite}',
-  hslFromMin: ${COLORS.hslFromMin},
-  hslFromMax: ${COLORS.hslFromMax},
-  hslToMin: ${COLORS.hslToMin},
-  hslToMax: ${COLORS.hslToMax},
-  hslSaturation: ${COLORS.hslSaturation},
-  hslLuminosity: ${COLORS.hslLuminosity},
-};
+      try {
+        localStorage.setItem(DEFAULTS_STORAGE_KEY, JSON.stringify(defaultsPayload));
+      } catch {
+        alert('Failed to save defaults (storage unavailable).');
+        return;
+      }
 
-const TITLE = {
-  text: '${TITLE.text.replace(/'/g, "\\'")}',
-  enabled: ${TITLE.enabled},
-  sizePercent: ${TITLE.sizePercent},
-  fillColor: '${TITLE.fillColor}',
-  strokeColor: '${TITLE.strokeColor}',
-  strokeWidth: ${TITLE.strokeWidth},
-  shadowEnabled: ${TITLE.shadowEnabled},
-  shadowColor: '${TITLE.shadowColor}',
-  shadowBlur: ${TITLE.shadowBlur},
-  shadowOffsetX: ${TITLE.shadowOffsetX},
-  shadowOffsetY: ${TITLE.shadowOffsetY},
-};`;
+      const configCode = `// RD-06 defaults (saved in localStorage: ${DEFAULTS_STORAGE_KEY})\n${JSON.stringify(defaultsPayload, null, 2)}`;
 
-      console.log('='.repeat(60));
-      console.log('Copy current settings to rd-main.js:');
-      console.log('='.repeat(60));
-      console.log(configCode);
-      console.log('='.repeat(60));
-
-      // Copy to clipboard
       navigator.clipboard.writeText(configCode).then(() => {
         const originalText = saveDefaultBtn.textContent;
-        saveDefaultBtn.textContent = '✓ Copied!';
+        saveDefaultBtn.textContent = '✓ Default Saved';
         setTimeout(() => {
           saveDefaultBtn.textContent = originalText;
         }, 2000);
       }).catch(() => {
-        alert('Check console to copy the settings code.');
+        const originalText = saveDefaultBtn.textContent;
+        saveDefaultBtn.textContent = '✓ Default Saved';
+        setTimeout(() => {
+          saveDefaultBtn.textContent = originalText;
+        }, 2000);
       });
     });
   }
