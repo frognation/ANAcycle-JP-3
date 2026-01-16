@@ -11,3 +11,4 @@ restore-local-history-report-*.json
 
 # Local project notes (not code)
 00_Project Note/
+.vercel
