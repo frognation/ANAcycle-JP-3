@@ -759,6 +759,9 @@ function seedSimulationFromCurrentImage() {
 
   if (!uniforms.simulation.sourceTexture.value) {
     const srcTex = new THREE.CanvasTexture(seedCanvas);
+    // Avoid vertical flipping artifacts (e.g., mirrored title bleeding through)
+    // by aligning the CanvasTexture orientation with our UV usage.
+    srcTex.flipY = false;
     srcTex.minFilter = THREE.LinearFilter;
     srcTex.magFilter = THREE.LinearFilter;
     srcTex.wrapS = THREE.ClampToEdgeWrapping;
