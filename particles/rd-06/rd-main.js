@@ -642,6 +642,7 @@ function updateTitleMaskTexture(width, height) {
 
   if (!titleMaskTexture) {
     titleMaskTexture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.UnsignedByteType);
+    titleMaskTexture.flipY = true;
     titleMaskTexture.minFilter = THREE.NearestFilter;
     titleMaskTexture.magFilter = THREE.NearestFilter;
     titleMaskTexture.wrapS = THREE.ClampToEdgeWrapping;
@@ -759,20 +760,21 @@ function seedSimulationFromCurrentImage() {
 
   if (!uniforms.simulation.sourceTexture.value) {
     const srcTex = new THREE.CanvasTexture(seedCanvas);
-    // Avoid vertical flipping artifacts (e.g., mirrored title bleeding through)
-    // by aligning the CanvasTexture orientation with our UV usage.
-    srcTex.flipY = false;
+    srcTex.flipY = true;
     srcTex.minFilter = THREE.LinearFilter;
     srcTex.magFilter = THREE.LinearFilter;
     srcTex.wrapS = THREE.ClampToEdgeWrapping;
     srcTex.wrapT = THREE.ClampToEdgeWrapping;
     uniforms.simulation.sourceTexture.value = srcTex;
   } else {
+    uniforms.simulation.sourceTexture.value.flipY = true;
     uniforms.simulation.sourceTexture.value.needsUpdate = true;
   }
 
   const titleMaskPixels = getTitleMaskPixels(width, height);
   const seedTexture = seedCanvasToDataTexture(width, height, titleMaskPixels);
+  seedTexture.flipY = true;
+  seedTexture.needsUpdate = true;
 
   mesh.material = materials.passthrough;
   uniforms.passthrough.textureToDisplay.value = seedTexture;
