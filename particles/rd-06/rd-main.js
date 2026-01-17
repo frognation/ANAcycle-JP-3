@@ -719,6 +719,11 @@ function drawCoverImageToBackground(imageEl, width, height) {
 
 function setVignetteEnabled(enabled) {
   RD.imageVignette = !!enabled;
+
+  // Apply a display-side vignette as well (multiply overlay) so the final result
+  // always darkens toward the edges, regardless of the active color mapping.
+  document.body.classList.toggle('vignette-on', RD.imageVignette);
+  document.body.style.setProperty('--vignette-strength', String(RD.imageVignetteStrength ?? 0.65));
 }
 
 function setupTabs() {
@@ -831,6 +836,10 @@ function setupImagePanel() {
     vignetteStrengthSlider.addEventListener('input', () => {
       RD.imageVignetteStrength = Math.max(0, Math.min(1, parseFloat(vignetteStrengthSlider.value)));
       vignetteStrengthValue.textContent = Number(RD.imageVignetteStrength).toFixed(2);
+
+      // Keep overlay strength in sync.
+      document.body.style.setProperty('--vignette-strength', String(RD.imageVignetteStrength));
+
       setBodyBackground(images[currentImageIndex]?.filename);
       if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
     });
