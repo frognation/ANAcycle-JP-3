@@ -297,9 +297,7 @@ void main() {
   // Drive the simulation from the source texture (background + title)
   vec3 src = texture2D(sourceTexture, v_uvs[0]).rgb;
   float srcLum = dot(src, vec3(0.299, 0.587, 0.114));
-  // Map luminance directly into chemical B.
-  // Note: inversion is handled on the source canvas via CSS filter (grayscale/invert).
-  float targetB = clamp(srcLum, 0.0, 1.0);
+  float targetB = clamp(1.0 - srcLum, 0.0, 1.0);
   B = mix(B, targetB, sourceStrength);
 
   if(mousePosition.x > 0.0 && mousePosition.y > 0.0) {
@@ -357,6 +355,9 @@ varying vec2 v_uv;
 uniform sampler2D textureToDisplay;
 uniform sampler2D previousIterationTexture;
 uniform float time;
+
+uniform float imageVignetteEnabled;
+uniform float imageVignetteStrength;
 
 uniform int renderingStyle;
 uniform float bwThreshold;
@@ -490,6 +491,21 @@ void main() {
     outputColor = pixel;
   }
 
+  // Display-side vignette (inside shader): guarantees dark-to-black edges even for
+  // non-linear/thresholded styles like DuoTone Sharp.
+  if (imageVignetteEnabled > 0.5 && imageVignetteStrength > 0.0) {
+    float inner = 0.55;
+    float p = 4.0;
+    float dx = abs(v_uv.x - 0.5) * 2.0;
+    float dy = abs(v_uv.y - 0.5) * 2.0;
+    float t = pow(pow(dx, p) + pow(dy, p), 1.0 / p);
+    t = clamp(t, 0.0, 1.0);
+    float u = clamp((t - inner) / (1.0 - inner), 0.0, 1.0);
+    float smoothFactor = u * u * (3.0 - 2.0 * u);
+    float s = clamp(imageVignetteStrength, 0.0, 1.0);
+    outputColor.rgb = mix(outputColor.rgb, vec3(0.0), smoothFactor * s);
+  }
+
   gl_FragColor = vec4(outputColor.rgb, 1.0);
 }
 `;
@@ -594,6 +610,9 @@ const uniforms = {
     hslTo: { value: new THREE.Vector2(COLORS.hslToMin, COLORS.hslToMax) },
     hslSaturation: { value: COLORS.hslSaturation },
     hslLuminosity: { value: COLORS.hslLuminosity },
+
+    imageVignetteEnabled: { value: RD.imageVignette ? 1.0 : 0.0 },
+    imageVignetteStrength: { value: RD.imageVignetteStrength },
   },
   passthrough: {
     textureToDisplay: { value: null },
@@ -756,6 +775,9 @@ function drawCoverImageToBackground(imageEl, width, height) {
 
 function setVignetteEnabled(enabled) {
   RD.imageVignette = !!enabled;
+  if (uniforms?.display?.imageVignetteEnabled) {
+    uniforms.display.imageVignetteEnabled.value = RD.imageVignette ? 1.0 : 0.0;
+  }
 }
 
 function setupTabs() {
@@ -868,6 +890,9 @@ function setupImagePanel() {
     vignetteStrengthSlider.addEventListener('input', () => {
       RD.imageVignetteStrength = Math.max(0, Math.min(1, parseFloat(vignetteStrengthSlider.value)));
       vignetteStrengthValue.textContent = Number(RD.imageVignetteStrength).toFixed(2);
+      if (uniforms?.display?.imageVignetteStrength) {
+        uniforms.display.imageVignetteStrength.value = RD.imageVignetteStrength;
+      }
       setBodyBackground(images[currentImageIndex]?.filename);
       if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
     });
@@ -1044,12 +1069,11 @@ function getTitleMaskPixels(width, height) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  // Draw the title in white so luminance maps directly to B.
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = '#000000';
   ctx.fillText(TITLE.text, centerX, centerY);
 
   if (TITLE.strokeWidth > 0) {
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
     ctx.lineWidth = TITLE.strokeWidth;
     ctx.strokeText(TITLE.text, centerX, centerY);
   }
@@ -1062,20 +1086,44 @@ function seedCanvasToDataTexture(width, height, titleMaskPixels) {
   const pixels = seedCtx.getImageData(0, 0, width, height).data;
   const data = new Uint8Array(pixels.length);
 
+  const vignetteEnabled = !!RD.imageVignette;
+  const vignetteStrength = Math.max(0, Math.min(1, RD.imageVignetteStrength ?? 0));
+  const vignetteInner = 0.55;
+  const vignettePower = 4.0;
+  const cx = width / 2;
+  const cy = height / 2;
+
   for (let i = 0; i < pixels.length; i += 4) {
     const r = pixels[i];
     const g = pixels[i + 1];
     const b = pixels[i + 2];
 
     const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    let bChem = Math.max(0, Math.min(255, Math.round(lum * 255)));
+    let bChem = Math.max(0, Math.min(255, Math.round((1 - lum) * 255)));
+
+    // Ensure vignette produces DARKER edges in the RD output (not inverted).
+    // We do this by reducing the initial chemical B near edges.
+    if (vignetteEnabled && vignetteStrength > 0 && cx > 0 && cy > 0) {
+      const pIndex = i / 4;
+      const x = pIndex % width;
+      const y = (pIndex - x) / width;
+
+      const dx = Math.abs((x - cx) / cx);
+      const dy = Math.abs((y - cy) / cy);
+      const t = Math.pow(Math.pow(dx, vignettePower) + Math.pow(dy, vignettePower), 1 / vignettePower);
+      const tt = Math.max(0, Math.min(1, t));
+      const u = Math.max(0, Math.min(1, (tt - vignetteInner) / (1 - vignetteInner)));
+      const smooth = u * u * (3 - 2 * u);
+      const mul = 1 - vignetteStrength * smooth;
+      bChem = Math.max(0, Math.min(255, Math.round(bChem * mul)));
+    }
 
     if (titleMaskPixels) {
       const mr = titleMaskPixels[i];
       const mg = titleMaskPixels[i + 1];
       const mb = titleMaskPixels[i + 2];
       const mLum = (0.299 * mr + 0.587 * mg + 0.114 * mb) / 255;
-      const maskB = Math.max(0, Math.min(255, Math.round(mLum * 255)));
+      const maskB = Math.max(0, Math.min(255, Math.round((1 - mLum) * 255)));
       bChem = Math.max(bChem, maskB);
     }
 
