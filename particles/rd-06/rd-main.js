@@ -1,4 +1,4 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import * as THREE from './vendor/three.module.js';
 
 // ============================================
 // ASSETS
@@ -1196,7 +1196,7 @@ function loadImageAtIndex(index) {
       rec.loaded = false;
       reject(e);
     };
-    img.src = `../../_img/${rec.filename}`;
+    img.src = new URL(`../../_img/${rec.filename}`, import.meta.url).href;
   });
 }
 
@@ -1280,7 +1280,12 @@ function seedSimulationFromCurrentImage() {
 }
 
 function setupThree(canvas) {
-  renderer = new THREE.WebGLRenderer({ canvas, preserveDrawingBuffer: true, alpha: true });
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, preserveDrawingBuffer: true, alpha: true });
+  } catch (err) {
+    // Surface a clear error for environments where WebGL is unavailable (e.g., some webviews).
+    throw new Error(`WebGL initialization failed: ${err && err.message ? err.message : String(err)}`);
+  }
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setClearColor(0x000000, 0);
 
@@ -1326,6 +1331,36 @@ void main() {
   vec4 s = texture2D(textureToSample, v_uv);
   float b = s.g;
   gl_FragColor = vec4(b, b, b, 1.0);
+}
+
+function showStartupError(message, err) {
+  try {
+    const existing = document.getElementById('rdStartupError');
+    if (existing) existing.remove();
+
+    const panel = document.createElement('div');
+    panel.id = 'rdStartupError';
+    panel.style.position = 'fixed';
+    panel.style.left = '10px';
+    panel.style.bottom = '10px';
+    panel.style.zIndex = '99999';
+    panel.style.maxWidth = 'min(720px, calc(100vw - 20px))';
+    panel.style.padding = '10px 12px';
+    panel.style.borderRadius = '8px';
+    panel.style.background = 'rgba(0,0,0,0.75)';
+    panel.style.border = '1px solid rgba(255,255,255,0.25)';
+    panel.style.color = '#fff';
+    panel.style.fontFamily = "'Courier New', Courier, monospace";
+    panel.style.fontSize = '12px';
+    panel.style.whiteSpace = 'pre-wrap';
+
+    const hint = 'If you are viewing this in a VS Code preview/webview, try opening the same URL in Chrome/Safari/Firefox.';
+    const detail = err ? (err.stack || err.message || String(err)) : '';
+    panel.textContent = `[RD-06] ${message}\n${hint}${detail ? `\n\n${detail}` : ''}`;
+    document.body.appendChild(panel);
+  } catch {
+    // ignore UI error rendering failures
+  }
 }
 `,
     blending: THREE.NoBlending,
@@ -2480,5 +2515,6 @@ async function main() {
 window.addEventListener('load', () => {
   main().catch((err) => {
     console.error('[RD-06] Failed to start:', err);
+    showStartupError('Failed to start (see details below).', err);
   });
 });
