@@ -111,10 +111,30 @@ _EN:_
   - _EN: If too strong, flow/bias can dominate and the pattern balance may break._
 
 - **Warm start**
-  - reseed 후 초기에 빠르게 패턴을 형성하도록 내부 반복을 추가로 돌립니다.
-  - 너무 높으면 ‘패턴이 생기는 과정’이 생략되고 바로 굳어 보일 수 있습니다.
-  - _EN: Runs extra internal iterations after reseed to form patterns faster._
-  - _EN: If too high, the “forming” phase is skipped and it can look instantly frozen._
+  - **무엇인가?**
+    - reseed(시드 갱신) 직후, 화면이 “빈/검정” 상태에서 천천히 올라오길 기다리지 않고 **시뮬레이션 스텝을 미리 여러 번 실행**해서 패턴을 빠르게 형성합니다.
+    - _EN: After reseed, it runs extra simulation iterations so patterns appear sooner instead of slowly forming from a blank/black state._
+  - **언제 실행되나?**
+    - 보통 “처음 로딩 직후 / 이미지 변경 / Reseed” 같은 이벤트에만 실행됩니다.
+    - 평상시(steady-state) 프레임에는 직접 영향을 주지 않습니다(단, warm start 중에는 그 시간만큼 CPU/GPU가 더 사용됨).
+    - _EN: Typically runs only right after startup / image change / reseed events._
+  - **UX/성능에 미치는 영향**
+    - 값이 클수록 “패턴이 빨리 보이는” 대신, reseed 직후 **잠깐의 지연(버벅임)** 이 커질 수 있습니다.
+    - 특히 저사양/모바일에서는 warm start가 “로딩이 느린 것처럼” 느껴지는 가장 큰 원인이 될 수 있습니다.
+    - _EN: Higher values make patterns show up faster, but increase short-term stutter after reseed. On low-end/mobile, it can be the main cause of perceived slowness._
+  - **권장 설정(웹 UX 기준, 제안)**
+    - 기본값은 “중간 정도”가 안전합니다: 예) **120~240**
+      - 첫 인상(검정 화면 시간)을 줄이면서도, reseed 때 UI가 완전히 멈추는 느낌을 줄입니다.
+    - 저사양을 우선하면: **0~120**
+    - 데스크톱/고사양을 우선하면: **240~480**
+    - _EN: A moderate default (e.g., 120–240) is usually safest for web UX; lower values for low-end devices, higher for desktop/high-end._
+  - **주의(“붕괴”와의 관계)**
+    - Warm start는 “붕괴 자체”를 직접 만들기보다는, 이미 붕괴로 가는 파라미터 조합일 때 **그 상태에 더 빨리 도달**하게 만들어 체감상 “갑자기 회색/흰색이 됨”을 강화할 수 있습니다.
+    - 붕괴가 잦다면, 문제 해결/디버깅 시에는 warm start를 **일시적으로 낮추거나 0으로** 두는 것이 안전합니다.
+    - _EN: Warm start doesn’t usually cause collapse by itself, but it can reach a collapsing fixed point faster. When debugging collapse, temporarily lower it or set to 0._
+  - **구현 메모(참고)**
+    - warm start는 한 번에 전부 돌리면 메인 스레드가 막힐 수 있어, 여러 프레임으로 **분할 실행**(requestAnimationFrame로 yield)하는 방식이 UX에 유리합니다.
+    - _EN: Splitting warm start across frames (yielding via requestAnimationFrame) avoids blocking the main thread and improves UX._
 
 - **Source strength**
   - 시드(sourceTexture)가 시뮬레이션을 “얼마나 강하게 끌어당길지”를 정합니다.
