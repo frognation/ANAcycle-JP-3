@@ -495,6 +495,8 @@ let renderTargets = [];
 let currentRT = 0;
 let renderTargetType = THREE.UnsignedByteType;
 
+let collapseProbeRT;
+
 let seedCanvas;
 let seedCtx;
 
@@ -564,12 +566,17 @@ const uniforms = {
   passthrough: {
     textureToDisplay: { value: null },
   },
+
+  probe: {
+    textureToSample: { value: null },
+  },
 };
 
 const materials = {
   simulation: null,
   display: null,
   passthrough: null,
+  probe: null,
 };
 
 function updateImageName(index) {
@@ -1252,10 +1259,37 @@ function setupThree(canvas) {
     blending: THREE.NoBlending,
   });
 
+  materials.probe = new THREE.ShaderMaterial({
+    uniforms: uniforms.probe,
+    vertexShader: passthroughVert,
+    fragmentShader: `
+varying vec2 v_uv;
+uniform sampler2D textureToSample;
+
+void main() {
+  vec4 s = texture2D(textureToSample, v_uv);
+  float b = s.g;
+  gl_FragColor = vec4(b, b, b, 1.0);
+}
+`,
+    blending: THREE.NoBlending,
+  });
+
   const geometry = new THREE.PlaneGeometry(2, 2);
   mesh = new THREE.Mesh(geometry, materials.display);
   mesh.frustumCulled = false;
   scene.add(mesh);
+
+  // Small probe target used for collapse detection (readback is reliable even when sim RT is float).
+  if (collapseProbeRT) collapseProbeRT.dispose();
+  collapseProbeRT = new THREE.WebGLRenderTarget(8, 8, {
+    format: THREE.RGBAFormat,
+    type: THREE.UnsignedByteType,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
 
   const handleResize = async () => {
     const width = window.innerWidth;
@@ -1420,6 +1454,73 @@ function setupThree(canvas) {
     renderer.setRenderTarget(null);
     renderer.render(scene, camera);
 
+    // Safety guard: detect near-uniform sim state (white/black/gray screen) and auto-recover.
+    // Runs infrequently to reduce readback stalls.
+    if (
+      collapseProbeRT &&
+      materials.probe &&
+      !isWarmStarting &&
+      !RD.showOriginal &&
+      frameCounter % 45 === 0
+    ) {
+      const w = 8;
+      const h = 8;
+      const pixels = new Uint8Array(w * h * 4);
+      let previousMaterial;
+      try {
+        previousMaterial = mesh.material;
+        mesh.material = materials.probe;
+        uniforms.probe.textureToSample.value = renderTargets[currentRT]?.texture ?? null;
+
+        renderer.setRenderTarget(collapseProbeRT);
+        renderer.render(scene, camera);
+        renderer.readRenderTargetPixels(collapseProbeRT, 0, 0, w, h, pixels);
+      } catch {
+        // If readback is not supported in this environment, silently skip the guard.
+      } finally {
+        renderer.setRenderTarget(null);
+        if (previousMaterial) mesh.material = previousMaterial;
+      }
+
+      // Compute variance of the probed B channel.
+      let sum = 0;
+      let sumSq = 0;
+      const n = w * h;
+      for (let i = 0; i < n; i++) {
+        const v = pixels[i * 4] / 255;
+        sum += v;
+        sumSq += v * v;
+      }
+      const mean = sum / n;
+      const variance = sumSq / n - mean * mean;
+
+      // Consider it “collapsed” when the sim becomes almost flat.
+      const nearFlat = variance < 0.00002;
+      const nearWhite = mean > 0.985;
+      const nearBlack = mean < 0.015;
+      const nearGray = mean > 0.45 && mean < 0.55;
+
+      if (nearFlat && (nearWhite || nearBlack || nearGray)) {
+        animate._collapseHits = (animate._collapseHits ?? 0) + 1;
+      } else {
+        animate._collapseHits = 0;
+      }
+
+      // Require multiple consecutive detections to avoid false positives.
+      if ((animate._collapseHits ?? 0) >= 3) {
+        animate._collapseHits = 0;
+
+        // Auto-recovery: reduce the most common culprits and reseed.
+        RD.sourceStrength = Math.min(RD.sourceStrength, 0.01);
+        RD.timestep = Math.min(RD.timestep, 1.0);
+        RD.stepsPerFrame = Math.min(RD.stepsPerFrame, 4);
+        uniforms.simulation.sourceStrength.value = RD.sourceStrength;
+        uniforms.simulation.timestep.value = RD.timestep;
+
+        seedSimulationFromCurrentImage();
+      }
+    }
+
     mouseMovedThisFrame = false;
 
     raf = requestAnimationFrame(animate);
@@ -1434,6 +1535,14 @@ function setupThree(canvas) {
     window.removeEventListener('pointerleave', handlePointerLeave);
     renderer.dispose();
     geometry.dispose();
+    if (collapseProbeRT) {
+      collapseProbeRT.dispose();
+      collapseProbeRT = null;
+    }
+    if (materials.probe) {
+      materials.probe.dispose();
+      materials.probe = null;
+    }
   };
 }
 
