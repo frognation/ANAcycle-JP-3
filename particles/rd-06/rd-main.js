@@ -356,9 +356,6 @@ uniform sampler2D textureToDisplay;
 uniform sampler2D previousIterationTexture;
 uniform float time;
 
-uniform float imageVignetteEnabled;
-uniform float imageVignetteStrength;
-
 uniform int renderingStyle;
 uniform float bwThreshold;
 uniform vec3 duoToneBlack;
@@ -491,21 +488,6 @@ void main() {
     outputColor = pixel;
   }
 
-  // Display-side vignette (inside shader): guarantees dark-to-black edges even for
-  // non-linear/thresholded styles like DuoTone Sharp.
-  if (imageVignetteEnabled > 0.5 && imageVignetteStrength > 0.0) {
-    float inner = 0.55;
-    float p = 4.0;
-    float dx = abs(v_uv.x - 0.5) * 2.0;
-    float dy = abs(v_uv.y - 0.5) * 2.0;
-    float t = pow(pow(dx, p) + pow(dy, p), 1.0 / p);
-    t = clamp(t, 0.0, 1.0);
-    float u = clamp((t - inner) / (1.0 - inner), 0.0, 1.0);
-    float smoothFactor = u * u * (3.0 - 2.0 * u);
-    float s = clamp(imageVignetteStrength, 0.0, 1.0);
-    outputColor.rgb = mix(outputColor.rgb, vec3(0.0), smoothFactor * s);
-  }
-
   gl_FragColor = vec4(outputColor.rgb, 1.0);
 }
 `;
@@ -610,9 +592,6 @@ const uniforms = {
     hslTo: { value: new THREE.Vector2(COLORS.hslToMin, COLORS.hslToMax) },
     hslSaturation: { value: COLORS.hslSaturation },
     hslLuminosity: { value: COLORS.hslLuminosity },
-
-    imageVignetteEnabled: { value: RD.imageVignette ? 1.0 : 0.0 },
-    imageVignetteStrength: { value: RD.imageVignetteStrength },
   },
   passthrough: {
     textureToDisplay: { value: null },
@@ -775,9 +754,6 @@ function drawCoverImageToBackground(imageEl, width, height) {
 
 function setVignetteEnabled(enabled) {
   RD.imageVignette = !!enabled;
-  if (uniforms?.display?.imageVignetteEnabled) {
-    uniforms.display.imageVignetteEnabled.value = RD.imageVignette ? 1.0 : 0.0;
-  }
 }
 
 function setupTabs() {
@@ -890,9 +866,6 @@ function setupImagePanel() {
     vignetteStrengthSlider.addEventListener('input', () => {
       RD.imageVignetteStrength = Math.max(0, Math.min(1, parseFloat(vignetteStrengthSlider.value)));
       vignetteStrengthValue.textContent = Number(RD.imageVignetteStrength).toFixed(2);
-      if (uniforms?.display?.imageVignetteStrength) {
-        uniforms.display.imageVignetteStrength.value = RD.imageVignetteStrength;
-      }
       setBodyBackground(images[currentImageIndex]?.filename);
       if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
     });
