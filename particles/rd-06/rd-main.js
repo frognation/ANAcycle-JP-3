@@ -2671,13 +2671,16 @@ async function main() {
   setupImagePanel();
   setupImageRolling();
 
-  // Global UI hide/show toggle
-  const uiToggle = document.getElementById('uiToggleBtn');
-  if (uiToggle) {
-    uiToggle.addEventListener('click', () => {
+
+  // Hide UI by default
+  document.body.classList.add('ui-hidden');
+
+  // 'u' key toggles UI visibility
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'u' || e.key === 'U') {
       document.body.classList.toggle('ui-hidden');
-    });
-  }
+    }
+  });
 
   await ensureTitleFontLoaded();
 

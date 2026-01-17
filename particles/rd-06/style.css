@@ -20,6 +20,16 @@ body {
     width: 100vw;
 }
 
+body.ui-hidden .controls,
+body.ui-hidden .panel-stack,
+body.ui-hidden .panel-tabs,
+body.ui-hidden .slider-controls,
+body.ui-hidden .tabbed-panel,
+body.ui-hidden .controls-header,
+body.ui-hidden .controls-content {
+    display: none !important;
+}
+
 /* Background image layer (optional, under WebGL canvas) */
 #bgCanvas {
     position: fixed;
