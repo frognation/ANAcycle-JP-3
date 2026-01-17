@@ -2026,6 +2026,12 @@ function setupEffectsPanel() {
       if (typeof sRD[k] !== 'undefined') RD[k] = sRD[k];
     });
 
+    // View-only state: never persist/restore "Show Original" from settings.
+    RD.showOriginal = false;
+    setOriginalOverlayVisible(false);
+    const toggleOriginalBtn = document.getElementById('toggleOriginalBtn');
+    if (toggleOriginalBtn) toggleOriginalBtn.textContent = 'Show Original';
+
     const sColors = settings.COLORS || {};
     Object.keys(COLORS).forEach((k) => {
       if (typeof sColors[k] !== 'undefined') COLORS[k] = sColors[k];
@@ -2046,6 +2052,12 @@ function setupEffectsPanel() {
     uniforms.simulation.sourceStrength.value = RD.sourceStrength;
 
     uniforms.display.renderingStyle.value = RD.renderingStyle;
+    if (uniforms.display.imageVignetteEnabled) {
+      uniforms.display.imageVignetteEnabled.value = RD.imageVignette ? 1.0 : 0.0;
+    }
+    if (uniforms.display.imageVignetteStrength) {
+      uniforms.display.imageVignetteStrength.value = RD.imageVignetteStrength;
+    }
     pushColorsToUniforms();
 
     setSlider('rdFSlider', 'rdFValue', RD.f, 4);
@@ -2316,6 +2328,10 @@ function setupImageRolling() {
   // Toggle original image view
   const toggleOriginalBtn = document.getElementById('toggleOriginalBtn');
   if (toggleOriginalBtn) {
+    // Ensure DOM reflects current state (prevents "effect disappeared" when body class gets out of sync).
+    toggleOriginalBtn.textContent = RD.showOriginal ? 'Show Effect' : 'Show Original';
+    setOriginalOverlayVisible(RD.showOriginal);
+
     toggleOriginalBtn.addEventListener('click', () => {
       RD.showOriginal = !RD.showOriginal;
       toggleOriginalBtn.textContent = RD.showOriginal ? 'Show Effect' : 'Show Original';
