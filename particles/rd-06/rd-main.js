@@ -2129,9 +2129,118 @@ function setupEffectsPanel() {
     URL.revokeObjectURL(url);
   };
 
+  const downloadBlob = (filename, blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const pad3 = (n) => String(Math.max(0, Math.floor(n))).padStart(3, '0');
+  const formatDateYYYYMMDD = (d) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  };
+
+  const getCanvasPngBlob = async () => {
+    const canvas = renderer?.domElement || document.getElementById('canvas');
+    if (!canvas || typeof canvas.toBlob !== 'function') {
+      throw new Error('Canvas not available for screenshot');
+    }
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Failed to create PNG blob');
+    return blob;
+  };
+
+  const settingsToMarkdown = (settings, meta) => {
+    const lines = [];
+    lines.push(`# RD-06 Settings`);
+    lines.push('');
+    lines.push(`- Saved: ${meta.iso}`);
+    lines.push(`- Base name: ${meta.base}`);
+    lines.push(`- Files: ${meta.jsonName}, ${meta.pngName}, ${meta.mdName}`);
+    lines.push('');
+    lines.push('## Settings JSON');
+    lines.push('');
+    lines.push('```json');
+    lines.push(JSON.stringify(settings, null, 2));
+    lines.push('```');
+    lines.push('');
+    return lines.join('\n');
+  };
+
+  const getNextSequenceNumber = async (dirHandle, datePrefix) => {
+    // Determine next ### by scanning existing files like YYYYMMDD_###.json
+    const re = new RegExp(`^${datePrefix}_(\\d{3})\\.json$`);
+    let max = 0;
+    // eslint-disable-next-line no-restricted-syntax
+    for await (const [name] of dirHandle.entries()) {
+      const m = name.match(re);
+      if (!m) continue;
+      const n = parseInt(m[1], 10);
+      if (Number.isFinite(n)) max = Math.max(max, n);
+    }
+    return max + 1;
+  };
+
+  const writeFileToDir = async (dirHandle, filename, data) => {
+    const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(data);
+    await writable.close();
+  };
+
+  const saveSettingsBundle = async () => {
+    const settings = collectSettings();
+    const now = new Date();
+    const date = formatDateYYYYMMDD(now);
+    const iso = now.toISOString();
+
+    // Prefer File System Access API when available (Chrome/Edge).
+    if (window.showDirectoryPicker) {
+      const root = await window.showDirectoryPicker({ mode: 'readwrite' });
+      const settingsDir = await root.getDirectoryHandle('JSON Settings', { create: true });
+      const seq = await getNextSequenceNumber(settingsDir, date);
+      const base = `${date}_${pad3(seq)}`;
+      const jsonName = `${base}.json`;
+      const pngName = `${base}.png`;
+      const mdName = `${base}.md`;
+
+      const pngBlob = await getCanvasPngBlob();
+      const mdText = settingsToMarkdown(settings, { iso, base, jsonName, pngName, mdName });
+
+      await writeFileToDir(settingsDir, jsonName, new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' }));
+      await writeFileToDir(settingsDir, pngName, pngBlob);
+      await writeFileToDir(settingsDir, mdName, new Blob([mdText], { type: 'text/markdown' }));
+
+      alert(`Saved to JSON Settings/\n${jsonName}\n${pngName}\n${mdName}`);
+      return;
+    }
+
+    // Fallback: download 3 files (cannot write to a local folder without permission APIs).
+    const base = `${date}_001`;
+    const jsonName = `${base}.json`;
+    const pngName = `${base}.png`;
+    const mdName = `${base}.md`;
+    const pngBlob = await getCanvasPngBlob();
+    const mdText = settingsToMarkdown(settings, { iso, base, jsonName, pngName, mdName });
+    downloadText(jsonName, JSON.stringify(settings, null, 2));
+    downloadBlob(pngName, pngBlob);
+    downloadBlob(mdName, new Blob([mdText], { type: 'text/markdown' }));
+    alert('Your browser does not support folder write access; downloaded 3 files instead.');
+  };
+
   if (saveJsonBtn) {
     saveJsonBtn.addEventListener('click', () => {
-      downloadText('rd-06-settings.json', JSON.stringify(collectSettings(), null, 2));
+      saveSettingsBundle().catch((err) => {
+        alert(`Save failed: ${err && err.message ? err.message : String(err)}`);
+      });
     });
   }
 
