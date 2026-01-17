@@ -524,6 +524,21 @@ void main() {
 }
 `;
 
+const seedBlendFrag = `
+varying vec2 v_uv;
+uniform sampler2D newSeedTexture;
+uniform sampler2D oldSimTexture;
+uniform sampler2D titleMaskTexture;
+
+void main() {
+  vec4 seed = texture2D(newSeedTexture, v_uv);
+  vec4 oldS = texture2D(oldSimTexture, v_uv);
+  float m = texture2D(titleMaskTexture, v_uv).a;
+  float keep = smoothstep(0.0, 0.02, m);
+  gl_FragColor = mix(seed, oldS, keep);
+}
+`;
+
 // ============================================
 // STATE
 // ============================================
@@ -560,6 +575,8 @@ let lastPointerMoveMs = 0;
 let lastMouseX = -1;
 let lastMouseY = -1;
 let frameCounter = 0;
+
+let hasSeededOnce = false;
 
 let warmStartToken = 0;
 let isWarmStarting = false;
@@ -614,6 +631,12 @@ const uniforms = {
     textureToDisplay: { value: null },
   },
 
+  seedBlend: {
+    newSeedTexture: { value: null },
+    oldSimTexture: { value: null },
+    titleMaskTexture: { value: null },
+  },
+
   probe: {
     textureToSample: { value: null },
   },
@@ -623,6 +646,7 @@ const materials = {
   simulation: null,
   display: null,
   passthrough: null,
+  seedBlend: null,
   probe: null,
 };
 
@@ -1290,8 +1314,18 @@ function seedSimulationFromCurrentImage() {
   seedTexture.flipY = true;
   seedTexture.needsUpdate = true;
 
-  mesh.material = materials.passthrough;
-  uniforms.passthrough.textureToDisplay.value = seedTexture;
+  // Keep the title effect continuous across reseeds by preserving the previous sim state
+  // within the title mask region.
+  const canPreserveTitle = TITLE.enabled && hasSeededOnce && renderTargets[currentRT]?.texture && titleMaskTexture;
+  if (canPreserveTitle) {
+    mesh.material = materials.seedBlend;
+    uniforms.seedBlend.newSeedTexture.value = seedTexture;
+    uniforms.seedBlend.oldSimTexture.value = renderTargets[currentRT].texture;
+    uniforms.seedBlend.titleMaskTexture.value = titleMaskTexture;
+  } else {
+    mesh.material = materials.passthrough;
+    uniforms.passthrough.textureToDisplay.value = seedTexture;
+  }
 
   renderer.setRenderTarget(renderTargets[0]);
   renderer.render(scene, camera);
@@ -1300,6 +1334,8 @@ function seedSimulationFromCurrentImage() {
 
   renderer.setRenderTarget(null);
   currentRT = 0;
+
+  hasSeededOnce = true;
 
   warmStartToken += 1;
   void warmStartSimulationAsync(RD.warmStartIterations, warmStartToken);
@@ -1343,6 +1379,13 @@ function setupThree(canvas) {
     uniforms: uniforms.passthrough,
     vertexShader: passthroughVert,
     fragmentShader: passthroughFrag,
+    blending: THREE.NoBlending,
+  });
+
+  materials.seedBlend = new THREE.ShaderMaterial({
+    uniforms: uniforms.seedBlend,
+    vertexShader: passthroughVert,
+    fragmentShader: seedBlendFrag,
     blending: THREE.NoBlending,
   });
 
@@ -2228,7 +2271,10 @@ function setupEffectsPanel() {
     // Prefer File System Access API when available (Chrome/Edge).
     if (window.showDirectoryPicker) {
       const root = await window.showDirectoryPicker({ mode: 'readwrite' });
-      const settingsDir = await root.getDirectoryHandle('JSON Settings', { create: true });
+      // If the user picked the JSON Settings folder itself, avoid creating a nested JSON Settings/JSON Settings.
+      const settingsDir = (root && root.name === 'JSON Settings')
+        ? root
+        : await root.getDirectoryHandle('JSON Settings', { create: true });
       const seq = await getNextSequenceNumber(settingsDir, date);
       const base = `${date}_${pad3(seq)}`;
       const jsonName = `${base}.json`;

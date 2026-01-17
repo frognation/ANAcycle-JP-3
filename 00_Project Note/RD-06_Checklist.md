@@ -124,3 +124,9 @@ This checklist tracks feature/UX requirements for the RD-06 single page (root in
   - 관련 파일: `particles/rd-06/rd-main.js`
   - 핵심 키워드: `titleMaskTexture`, `display.titleOnly`, 이미지 로드 전 WebGL start
 
+- 2026-01-17: 배경 이미지 전환(리시드) 중에도 타이틀 RD가 끊기지 않게 “타이틀 영역 보존 시딩” 추가.
+  - 아이디어: reseed할 때 타이틀 마스크 영역은 이전 시뮬레이션 텍스처를 유지하고, 나머지만 새 시드로 갱신.
+  - 구현: `seedBlendFrag`로 `newSeedTexture`와 `oldSimTexture`를 `titleMaskTexture`로 mix.
+  - 관련 파일: `particles/rd-06/rd-main.js`
+  - 핵심 키워드: `seedBlendFrag`, `materials.seedBlend`, `hasSeededOnce`
+
