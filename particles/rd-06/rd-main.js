@@ -356,6 +356,9 @@ uniform sampler2D textureToDisplay;
 uniform sampler2D previousIterationTexture;
 uniform float time;
 
+uniform int titleOnly;
+uniform sampler2D titleMaskTexture;
+
 uniform int renderingStyle;
 uniform float bwThreshold;
 uniform vec3 duoToneBlack;
@@ -488,7 +491,14 @@ void main() {
     outputColor = pixel;
   }
 
-  gl_FragColor = vec4(outputColor.rgb, 1.0);
+  float alphaOut = 1.0;
+  if (titleOnly == 1) {
+    float maskA = texture2D(titleMaskTexture, v_uv).a;
+    // Soft edge avoids harsh aliasing + reduces perceived “black screen”.
+    alphaOut = smoothstep(0.0, 0.02, maskA);
+  }
+
+  gl_FragColor = vec4(outputColor.rgb, alphaOut);
 }
 `;
 
@@ -577,6 +587,9 @@ const uniforms = {
     previousIterationTexture: { value: null },
     time: { value: 0 },
     renderingStyle: { value: RD.renderingStyle },
+    // 0 = normal full-screen display, 1 = show only title region (masked) during initial load.
+    titleOnly: { value: 0 },
+    titleMaskTexture: { value: null },
     bwThreshold: { value: 0.07 },
     duoToneBlack: { value: new THREE.Color(COLORS.duoToneBlack) },
     duoToneWhite: { value: new THREE.Color(COLORS.duoToneWhite) },
@@ -1020,6 +1033,7 @@ function updateTitleMaskTexture(width, height) {
     titleMaskTexture.wrapS = THREE.ClampToEdgeWrapping;
     titleMaskTexture.wrapT = THREE.ClampToEdgeWrapping;
     uniforms.simulation.titleMaskTexture.value = titleMaskTexture;
+    uniforms.display.titleMaskTexture.value = titleMaskTexture;
   } else {
     titleMaskTexture.image.data = data;
     titleMaskTexture.image.width = width;
@@ -1248,6 +1262,11 @@ function seedSimulationFromCurrentImage() {
 
   // Keep the title visually "on top" by preventing brush influence within the title mask.
   updateTitleMaskTexture(width, height);
+
+  // Startup behavior: if the image is not ready yet, show only the title region.
+  // When the first image is loaded, we switch back to full-screen automatically.
+  const hasImage = !!images[currentImageIndex]?.img;
+  uniforms.display.titleOnly.value = hasImage ? 0 : 1;
 
   if (!uniforms.simulation.sourceTexture.value) {
     const srcTex = new THREE.CanvasTexture(seedCanvas);
@@ -2572,10 +2591,7 @@ async function main() {
     resizeBackgroundCanvas();
   }
 
-  images = await loadImages();
-  updateImageName(currentImageIndex);
-  setBodyBackground(images[currentImageIndex].filename);
-
+  // Setup UI early so the first paint is fast.
   setupTabs();
   setupEffectsPanel();
   setupBrushPanel();
@@ -2591,7 +2607,26 @@ async function main() {
   }
 
   await ensureTitleFontLoaded();
+
+  // Start WebGL ASAP: seed will fall back to title-only until the first image decodes.
   setupThree(canvas);
+
+  // Initialize image list and begin loading AFTER WebGL has started.
+  images = IMAGES.map((filename) => createImageRecord(filename));
+  updateImageName(currentImageIndex);
+
+  try {
+    await loadImageAtIndex(currentImageIndex);
+  } catch {
+    // If the first image fails to load, keep title-only.
+  }
+
+  if (images[currentImageIndex]?.img) {
+    setBodyBackground(images[currentImageIndex].filename);
+    uniforms.display.titleOnly.value = 0;
+    seedSimulationFromCurrentImage();
+    startBackgroundImageLoading();
+  }
 }
 
 window.addEventListener('load', () => {

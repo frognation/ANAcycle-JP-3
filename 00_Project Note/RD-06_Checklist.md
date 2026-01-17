@@ -28,6 +28,18 @@ This checklist tracks feature/UX requirements for the RD-06 single page (root in
   - 메모: 초기 로딩 병목은 (1) 이미지 전체 프리로드, (2) warm start 동기 루프(메인스레드 블로킹) 가능성. 해결 방향: lazy-load + warm start를 프레임 분할.
   - EN: Startup takes too long before the effect appears; show the title text with the effect applied first while loading.
   - EN note: Likely bottlenecks are (1) preloading the full image, (2) a synchronous warm-start loop blocking the main thread. Direction: lazy-load + split warm-start across frames.
+  - 진행(2026-01-17): **타이틀 영역만 먼저 RD가 보이도록** “title-only masked display” 방식 적용.
+    - WebGL/시뮬레이터를 이미지 로드 전에 먼저 시작.
+    - 첫 시드: 이미지가 없으면 검정 배경 + 타이틀 오버레이로 seed.
+    - 디스플레이는 titleMaskTexture 알파로 마스킹해서 “타이틀 영역만” 출력.
+    - 첫 이미지 로드 완료 시 full-screen display로 전환 후 reseed.
+    - 되돌리기 포인트: `display.titleOnly` 관련 유니폼/셰이더/메인 로딩 순서 변경 커밋을 revert.
+  - Progress (2026-01-17): Implemented **title-only RD first** via a “title-only masked display” approach.
+    - Start WebGL/sim before image load.
+    - First seed: if no image, seed black background + title overlay.
+    - Display is masked by titleMaskTexture alpha so only the title region renders.
+    - Once the first image loads, switch to full-screen display and reseed.
+    - Revert point: revert the commit that introduces `display.titleOnly` + shader + main() load-order changes.
 
 ---
 
@@ -103,3 +115,12 @@ This checklist tracks feature/UX requirements for the RD-06 single page (root in
     - Split warm start and reseed across requestAnimationFrame (avoid main-thread blocking)
     - Dynamically adjust stepsPerFrame (auto-reduce on frame drops)
     - Provide simScale (resolution) presets (quality ↔ speed)
+
+---
+
+## 진행 로그 / Progress Log
+
+- 2026-01-17: 타이틀-first RD 로딩 UX 개선(타이틀만 먼저 보이고, 이미지 로드되면 전체로 전환).
+  - 관련 파일: `particles/rd-06/rd-main.js`
+  - 핵심 키워드: `titleMaskTexture`, `display.titleOnly`, 이미지 로드 전 WebGL start
+
