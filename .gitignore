@@ -9,6 +9,9 @@ dev-server.sh
 backups/
 restore-local-history-report-*.json
 
+# Local export output (created by RD-06 save bundle)
+Json Settings/
+
 # Project notes (tracked)
 # - Keep docs/versioned guidance in git
 # - If you ever want to ignore local-only scratch files inside, add more specific patterns here

@@ -491,14 +491,18 @@ void main() {
     outputColor = pixel;
   }
 
-  float alphaOut = 1.0;
   if (titleOnly == 1) {
     float maskA = texture2D(titleMaskTexture, v_uv).a;
-    // Soft edge avoids harsh aliasing + reduces perceived “black screen”.
-    alphaOut = smoothstep(0.0, 0.02, maskA);
+    // Soft edge avoids harsh aliasing.
+    float m = smoothstep(0.0, 0.02, maskA);
+
+    // Black-filled background, title region shows RD color.
+    vec3 rgbOut = mix(vec3(0.0), outputColor.rgb, m);
+    gl_FragColor = vec4(rgbOut, 1.0);
+    return;
   }
 
-  gl_FragColor = vec4(outputColor.rgb, alphaOut);
+  gl_FragColor = vec4(outputColor.rgb, 1.0);
 }
 `;
 
