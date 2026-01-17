@@ -665,8 +665,10 @@ function applyVignetteToCanvas(ctx, width, height, strength = 0.65) {
 
   const cx = width / 2;
   const cy = height / 2;
-  const maxR = Math.hypot(cx, cy);
   const inner = 0.55;
+  // Shape power > 2 makes the vignette closer to a square (superellipse / squircle).
+  // This also ensures the top/bottom center edges reach full strength (unlike diagonal-normalized distance).
+  const shapePower = 4.0;
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
@@ -675,8 +677,11 @@ function applyVignetteToCanvas(ctx, width, height, strength = 0.65) {
       const g = d[i + 1];
       const b = d[i + 2];
 
-      const t = Math.hypot(x - cx, y - cy) / maxR;
-      const u = Math.max(0, Math.min(1, (t - inner) / (1 - inner)));
+      const dx = cx > 0 ? Math.abs((x - cx) / cx) : 0;
+      const dy = cy > 0 ? Math.abs((y - cy) / cy) : 0;
+      const t = Math.pow(Math.pow(dx, shapePower) + Math.pow(dy, shapePower), 1 / shapePower);
+      const tt = Math.max(0, Math.min(1, t));
+      const u = Math.max(0, Math.min(1, (tt - inner) / (1 - inner)));
       const smooth = u * u * (3 - 2 * u);
       const mul = 1 - s * smooth;
 
@@ -719,11 +724,6 @@ function drawCoverImageToBackground(imageEl, width, height) {
 
 function setVignetteEnabled(enabled) {
   RD.imageVignette = !!enabled;
-
-  // Apply a display-side vignette as well (multiply overlay) so the final result
-  // always darkens toward the edges, regardless of the active color mapping.
-  document.body.classList.toggle('vignette-on', RD.imageVignette);
-  document.body.style.setProperty('--vignette-strength', String(RD.imageVignetteStrength ?? 0.65));
 }
 
 function setupTabs() {
@@ -836,10 +836,6 @@ function setupImagePanel() {
     vignetteStrengthSlider.addEventListener('input', () => {
       RD.imageVignetteStrength = Math.max(0, Math.min(1, parseFloat(vignetteStrengthSlider.value)));
       vignetteStrengthValue.textContent = Number(RD.imageVignetteStrength).toFixed(2);
-
-      // Keep overlay strength in sync.
-      document.body.style.setProperty('--vignette-strength', String(RD.imageVignetteStrength));
-
       setBodyBackground(images[currentImageIndex]?.filename);
       if (renderer && renderTargets.length >= 2) seedSimulationFromCurrentImage();
     });
