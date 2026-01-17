@@ -1291,10 +1291,11 @@ function seedSimulationFromCurrentImage() {
   // Keep the title visually "on top" by preventing brush influence within the title mask.
   updateTitleMaskTexture(width, height);
 
-  // Startup behavior: if the image is not ready yet, show only the title region.
-  // When the first image is loaded, we switch back to full-screen automatically.
+  // Startup behavior: if the very first seed happens before any image is ready,
+  // show only the title region. During later image transitions we should NEVER
+  // re-enter title-only mode (that looks like the title is "reloading").
   const hasImage = !!images[currentImageIndex]?.img;
-  uniforms.display.titleOnly.value = hasImage ? 0 : 1;
+  uniforms.display.titleOnly.value = (!hasSeededOnce && !hasImage) ? 1 : 0;
 
   if (!uniforms.simulation.sourceTexture.value) {
     const srcTex = new THREE.CanvasTexture(seedCanvas);
@@ -2495,17 +2496,39 @@ function setupImageRolling() {
   const prevBtn = document.getElementById('prevBtn');
   const nextBtn = document.getElementById('nextBtn');
 
+  // Guard against overlapping async transitions (rapid clicks). Stale transitions
+  // can reseed with no image and force title-only mode, which reads as "reloading".
+  let imageChangeToken = 0;
+
   const changeImage = async (dir) => {
+    const myToken = ++imageChangeToken;
     currentImageIndex = (currentImageIndex + dir + images.length) % images.length;
+
+    if (prevBtn) prevBtn.disabled = true;
+    if (nextBtn) nextBtn.disabled = true;
+
+    let loaded = false;
     try {
       await loadImageAtIndex(currentImageIndex);
+      loaded = true;
     } catch {
-      // If load fails, still allow background change; seed will fall back to title-only.
+      // If load fails, keep the current simulation (avoid title-only fallback).
+      loaded = false;
     }
+
+    // If another transition started while we were awaiting, abort this one.
+    if (myToken !== imageChangeToken) return;
+
     updateImageName(currentImageIndex);
-    setBodyBackground(images[currentImageIndex].filename);
     await ensureTitleFontLoaded();
-    seedSimulationFromCurrentImage();
+
+    if (loaded) {
+      setBodyBackground(images[currentImageIndex].filename);
+      seedSimulationFromCurrentImage();
+    }
+
+    if (prevBtn) prevBtn.disabled = false;
+    if (nextBtn) nextBtn.disabled = false;
   };
 
   if (prevBtn) prevBtn.addEventListener('click', () => changeImage(-1));
