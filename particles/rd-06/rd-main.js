@@ -1029,6 +1029,13 @@ function seedCanvasToDataTexture(width, height, titleMaskPixels) {
   const pixels = seedCtx.getImageData(0, 0, width, height).data;
   const data = new Uint8Array(pixels.length);
 
+  const vignetteEnabled = !!RD.imageVignette;
+  const vignetteStrength = Math.max(0, Math.min(1, RD.imageVignetteStrength ?? 0));
+  const vignetteInner = 0.55;
+  const vignettePower = 4.0;
+  const cx = width / 2;
+  const cy = height / 2;
+
   for (let i = 0; i < pixels.length; i += 4) {
     const r = pixels[i];
     const g = pixels[i + 1];
@@ -1036,6 +1043,23 @@ function seedCanvasToDataTexture(width, height, titleMaskPixels) {
 
     const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     let bChem = Math.max(0, Math.min(255, Math.round((1 - lum) * 255)));
+
+    // Ensure vignette produces DARKER edges in the RD output (not inverted).
+    // We do this by reducing the initial chemical B near edges.
+    if (vignetteEnabled && vignetteStrength > 0 && cx > 0 && cy > 0) {
+      const pIndex = i / 4;
+      const x = pIndex % width;
+      const y = (pIndex - x) / width;
+
+      const dx = Math.abs((x - cx) / cx);
+      const dy = Math.abs((y - cy) / cy);
+      const t = Math.pow(Math.pow(dx, vignettePower) + Math.pow(dy, vignettePower), 1 / vignettePower);
+      const tt = Math.max(0, Math.min(1, t));
+      const u = Math.max(0, Math.min(1, (tt - vignetteInner) / (1 - vignetteInner)));
+      const smooth = u * u * (3 - 2 * u);
+      const mul = 1 - vignetteStrength * smooth;
+      bChem = Math.max(0, Math.min(255, Math.round(bChem * mul)));
+    }
 
     if (titleMaskPixels) {
       const mr = titleMaskPixels[i];
