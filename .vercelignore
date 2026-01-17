@@ -3,8 +3,8 @@
 .git/
 
 # Large video files in settings
-Json Settings/*.mov
-Json Settings/**/*.mov
+JSON Settings/*.mov
+JSON Settings/**/*.mov
 
 # macOS system files
 .DS_Store
