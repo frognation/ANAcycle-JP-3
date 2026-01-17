@@ -501,9 +501,9 @@ void main() {
     float t = pow(pow(dx, p) + pow(dy, p), 1.0 / p);
     t = clamp(t, 0.0, 1.0);
     float u = clamp((t - inner) / (1.0 - inner), 0.0, 1.0);
-    float smooth = u * u * (3.0 - 2.0 * u);
+    float smoothFactor = u * u * (3.0 - 2.0 * u);
     float s = clamp(imageVignetteStrength, 0.0, 1.0);
-    outputColor.rgb = mix(outputColor.rgb, vec3(0.0), smooth * s);
+    outputColor.rgb = mix(outputColor.rgb, vec3(0.0), smoothFactor * s);
   }
 
   gl_FragColor = vec4(outputColor.rgb, 1.0);
