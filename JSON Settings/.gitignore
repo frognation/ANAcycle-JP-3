@@ -1,4 +1,0 @@
-# Keep the folder in git, but ignore generated export bundles
-*
-!.gitignore
-!.gitkeep
