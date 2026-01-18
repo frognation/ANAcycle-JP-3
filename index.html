@@ -452,13 +452,29 @@
 
   <script type="module" src="./particles/rd-06/rd-main.js"></script>
   <script>
-    // Hide UI by default
-    document.body.classList.add('ui-hidden');
-    // 'u' key toggles UI visibility
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'u' || e.key === 'U') {
-        document.body.classList.toggle('ui-hidden');
-      }
+    // Hide UI by default and enable 'u' key toggle after DOM is ready
+    window.addEventListener('DOMContentLoaded', () => {
+      console.log('[UI TOGGLE] Script loaded');
+      document.body.classList.add('ui-hidden');
+      console.log('[UI TOGGLE] ui-hidden added to body:', document.body.classList.contains('ui-hidden'));
+      window.addEventListener('keydown', (e) => {
+        const tag = (document.activeElement && document.activeElement.tagName) ? document.activeElement.tagName.toLowerCase() : '';
+        if ((e.key === 'u' || e.key === 'U') && !['input','textarea','select'].includes(tag)) {
+          e.preventDefault();
+          document.body.classList.toggle('ui-hidden');
+          console.log('[UI TOGGLE] u pressed, ui-hidden now:', document.body.classList.contains('ui-hidden'));
+          // 강제로 스타일 적용 (디버깅용)
+          if (document.body.classList.contains('ui-hidden')) {
+            document.querySelectorAll('.controls,.panel-stack,.panel-tabs,.slider-controls,.tabbed-panel,.controls-header,.controls-content').forEach(el => {
+              el.style.display = 'none';
+            });
+          } else {
+            document.querySelectorAll('.controls,.panel-stack,.panel-tabs,.slider-controls,.tabbed-panel,.controls-header,.controls-content').forEach(el => {
+              el.style.display = '';
+            });
+          }
+        }
+      });
     });
   </script>
 </body>

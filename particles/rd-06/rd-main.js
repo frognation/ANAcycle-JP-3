@@ -21,6 +21,7 @@ const IMAGES = [
   '14.jpg',
   '15.jpg',
   '16.jpg',
+  'life_on_mars.jpg',
 ];
 
 const TITLE_FONT_FAMILY = 'ANACycleTitle';
@@ -2672,15 +2673,7 @@ async function main() {
   setupImageRolling();
 
 
-  // Hide UI by default
-  document.body.classList.add('ui-hidden');
-
-  // 'u' key toggles UI visibility
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'u' || e.key === 'U') {
-      document.body.classList.toggle('ui-hidden');
-    }
-  });
+  // ...existing code...
 
   await ensureTitleFontLoaded();
 
