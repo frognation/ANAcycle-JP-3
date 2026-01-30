@@ -24,6 +24,82 @@ const IMAGES = [
   'life_on_mars.jpg',
 ];
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|avif)$/i;
+const IMAGE_DIR_URL = new URL('../../_img/', import.meta.url).href;
+const IMAGE_MANIFEST_URL = new URL('../../_img/manifest.json', import.meta.url).href;
+
+async function resolveImageFilenames() {
+  const normalize = (name) => {
+    if (!name) return null;
+    const s = String(name).trim().replace(/^\.\//, '');
+    if (!s || s === '../') return null;
+    if (!IMAGE_EXT_RE.test(s)) return null;
+    return s;
+  };
+
+  const uniq = (arr) => {
+    const out = [];
+    const seen = new Set();
+    for (const item of arr) {
+      const v = normalize(item);
+      if (!v) continue;
+      const k = v.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(v);
+    }
+    return out;
+  };
+
+  // 1) Try a simple manifest file: /_img/manifest.json
+  try {
+    const res = await fetch(`${IMAGE_MANIFEST_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (Array.isArray(data?.images) ? data.images : []);
+      const files = uniq(list);
+      if (files.length) return files;
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2) Try directory listing (works with python http.server and some static servers)
+  try {
+    const res = await fetch(`${IMAGE_DIR_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) {
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const links = Array.from(doc.querySelectorAll('a[href]'));
+      const hrefs = links.map((a) => {
+        try {
+          const u = new URL(a.getAttribute('href'), IMAGE_DIR_URL);
+          if (!u.pathname) return null;
+          const pathname = u.pathname;
+          if (!pathname.toLowerCase().includes('/_img/')) return null;
+          const filename = pathname.split('/').pop();
+          return filename ? decodeURIComponent(filename) : null;
+        } catch {
+          return null;
+        }
+      });
+
+      const files = uniq(hrefs);
+      if (files.length) {
+        // Keep a stable order for numbered files.
+        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+        files.sort(collator.compare);
+        return files;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3) Fallback to the hardcoded list.
+  return IMAGES.slice();
+}
+
 const TITLE_FONT_FAMILY = 'ANACycleTitle';
 
 const TITLE = {
@@ -1751,7 +1827,8 @@ void main() {
 
 async function loadImages() {
   // Keep a stable list; load lazily for faster first paint.
-  images = IMAGES.map((filename) => createImageRecord(filename));
+  const filenames = await resolveImageFilenames();
+  images = filenames.map((filename) => createImageRecord(filename));
   await loadImageAtIndex(currentImageIndex);
   startBackgroundImageLoading();
   return images;
@@ -2854,6 +2931,74 @@ function setupImageRolling() {
 
   document.addEventListener('keydown', (e) => {
     if (!images.length) return;
+
+    const isTextTypingTarget = () => {
+      const active = document.activeElement;
+      const tag = active?.tagName?.toLowerCase();
+      if (!tag) return false;
+
+      if (active?.isContentEditable) return true;
+      if (tag === 'textarea') return true;
+
+      if (tag === 'input') {
+        const type = String(active.getAttribute('type') || active.type || '').toLowerCase();
+        // Only block shortcuts when the user could reasonably be typing letters.
+        return type === '' || type === 'text' || type === 'search' || type === 'email' || type === 'password' || type === 'url' || type === 'tel' || type === 'number';
+      }
+
+      return false;
+    };
+
+    const setBlankMode = (enabled) => {
+      const stageCanvas = document.getElementById('canvas');
+      const stageBg = document.getElementById('bgCanvas');
+      const overlay = document.getElementById('originalOverlay');
+      const vignette = document.getElementById('vignetteOverlay');
+
+      if (enabled) {
+        document.documentElement.dataset.blankMode = '1';
+
+        const hadUiHidden = document.body.classList.contains('ui-hidden');
+        document.documentElement.dataset.blankPrevUiHidden = hadUiHidden ? '1' : '0';
+        document.body.classList.add('ui-hidden');
+
+        if (stageCanvas) stageCanvas.style.visibility = 'hidden';
+        if (stageBg) stageBg.style.visibility = 'hidden';
+        if (overlay) overlay.style.visibility = 'hidden';
+        if (vignette) vignette.style.visibility = 'hidden';
+      } else {
+        delete document.documentElement.dataset.blankMode;
+
+        const prev = document.documentElement.dataset.blankPrevUiHidden;
+        delete document.documentElement.dataset.blankPrevUiHidden;
+        if (prev !== '1') document.body.classList.remove('ui-hidden');
+
+        if (stageCanvas) stageCanvas.style.visibility = '';
+        if (stageBg) stageBg.style.visibility = '';
+        if (overlay) overlay.style.visibility = '';
+        if (vignette) vignette.style.visibility = '';
+      }
+    };
+
+    const toggleBlankMode = () => {
+      const isBlank = document.documentElement.dataset.blankMode === '1';
+      setBlankMode(!isBlank);
+      if (isBlank) seedSimulationFromCurrentImage();
+    };
+
+    const isReseedKey = e.code === 'KeyR' || e.key === 'r' || e.key === 'R';
+    const isBlankKey = e.code === 'KeyX' || e.key === 'x' || e.key === 'X';
+
+    if (isReseedKey && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (!isTextTypingTarget()) seedSimulationFromCurrentImage();
+      return;
+    }
+
+    if (isBlankKey && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (!isTextTypingTarget()) toggleBlankMode();
+      return;
+    }
+
     if (e.key === 'ArrowLeft') changeImage(-1);
     else if (e.key === 'ArrowRight') changeImage(1);
   });
@@ -2885,7 +3030,9 @@ async function main() {
   setupThree(canvas);
 
   // Initialize image list and begin loading AFTER WebGL has started.
-  images = IMAGES.map((filename) => createImageRecord(filename));
+  const filenames = await resolveImageFilenames();
+  images = filenames.map((filename) => createImageRecord(filename));
+  if (currentImageIndex >= images.length) currentImageIndex = 0;
   updateImageName(currentImageIndex);
 
   try {
