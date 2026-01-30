@@ -62,15 +62,15 @@ const PRESETS = [
 ];
 
 const RD = {
-  f: 0.0330,
+  f: 0.028,
   k: 0.0655,
-  dA: 0.2095,
-  dB: 0.1050,
-  timestep: 1.0,
-  brushRadius: 100.0,
-  brushFeather: 0.5,
-  stepsPerFrame: 60,
-  renderingStyle: 7,
+  dA: 0.167,
+  dB: 0.0775,
+  timestep: 1.05,
+  brushRadius: 180.0,
+  brushFeather: 0.84,
+  stepsPerFrame: 30,
+  renderingStyle: 1,
   warmStartIterations: 240,
   simScale: 1.0,
   biasX: 0.0,
@@ -79,6 +79,14 @@ const RD = {
   invertImage: false,
   showOriginal: false,
 
+  // Duo/Tritone tuning
+  bwThreshold: 0.07,
+  duoEdgeSoftness: 0.0,
+  triMidPosition: 0.82,
+  triMidWidth: 0.12,
+  triEdgeSoftness: 0.03,
+  triToneBias: -0.15,
+
   // Image controls
   imageVignette: false,
   imageVignetteStrength: 0.65,
@@ -86,25 +94,40 @@ const RD = {
   imageAutoLevelsStrength: 1.0,
 
   // Brush tuning (simulation)
-  brushPower: 1.0,
-  brushNoiseScale: 1.0,
-  brushSpeckle: 0.25,
-  brushDelta: 0.06,
+  brushPower: 3.0,
+  brushNoiseScale: 2.06,
+  brushSpeckle: 0.0,
+  brushDelta: 0.25,
 };
 
 const DEFAULTS_STORAGE_KEY = 'rd-06-defaults-v1';
 
+function readSavedDefaults() {
+  try {
+    const raw = localStorage.getItem(DEFAULTS_STORAGE_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
 const COLORS = {
-  // Gradient (style 1)
+  // Gradient (style 3)
   color1: '#000000', stop1: 0.0,
   color2: '#000000', stop2: 0.2,
   color3: '#ffffff', stop3: 0.4,
   color4: '#000000', stop4: 0.6,
   color5: '#000000', stop5: 0.8,
 
-  // Duo tone (style 7)
+  // Duo tone (style 1)
   duoToneBlack: '#000000',
-  duoToneWhite: '#ffffff',
+  duoToneWhite: '#003cf0',
+
+  // Tritone mid color (style 2)
+  triToneMid: '#f5f5f5',
 
   // HSL mapping (style 0)
   hslFromMin: 0.0,
@@ -117,10 +140,8 @@ const COLORS = {
 
 function applySavedDefaults() {
   try {
-    const raw = localStorage.getItem(DEFAULTS_STORAGE_KEY);
-    if (!raw) return;
-    const saved = JSON.parse(raw);
-    if (!saved || typeof saved !== 'object') return;
+    const saved = readSavedDefaults();
+    if (!saved) return;
 
     const applySubset = (target, source, allowedKeys) => {
       if (!source || typeof source !== 'object') return;
@@ -131,17 +152,41 @@ function applySavedDefaults() {
       });
     };
 
+    const styleEntry = saved.styles?.[String(RD.renderingStyle)] || saved.styles?.[RD.renderingStyle];
+    if (styleEntry && typeof styleEntry === 'object') {
+      applySubset(RD, styleEntry.RD, [
+        'f', 'k', 'dA', 'dB', 'timestep', 'brushRadius', 'brushFeather', 'stepsPerFrame',
+        'renderingStyle', 'warmStartIterations', 'simScale', 'biasX', 'biasY', 'sourceStrength',
+        'invertImage',
+        'bwThreshold', 'duoEdgeSoftness', 'triMidPosition', 'triMidWidth', 'triEdgeSoftness', 'triToneBias',
+        'imageVignette', 'imageVignetteStrength', 'imageAutoLevels', 'imageAutoLevelsStrength',
+        'brushPower', 'brushNoiseScale', 'brushSpeckle', 'brushDelta',
+      ]);
+      applySubset(COLORS, styleEntry.COLORS, [
+        'color1', 'stop1', 'color2', 'stop2', 'color3', 'stop3', 'color4', 'stop4', 'color5', 'stop5',
+        'duoToneBlack', 'duoToneWhite', 'triToneMid',
+        'hslFromMin', 'hslFromMax', 'hslToMin', 'hslToMax', 'hslSaturation', 'hslLuminosity',
+      ]);
+      applySubset(TITLE, styleEntry.TITLE, [
+        'text', 'enabled', 'position', 'sizePercent', 'fillColor', 'strokeColor', 'strokeWidth',
+        'shadowEnabled', 'shadowColor', 'shadowBlur', 'shadowOffsetX', 'shadowOffsetY',
+      ]);
+      return;
+    }
+
     applySubset(RD, saved.RD, [
       'f', 'k', 'dA', 'dB', 'timestep', 'brushRadius', 'brushFeather', 'stepsPerFrame',
       'renderingStyle', 'warmStartIterations', 'simScale', 'biasX', 'biasY', 'sourceStrength',
       'invertImage',
+
+      'bwThreshold', 'duoEdgeSoftness', 'triMidPosition', 'triMidWidth', 'triEdgeSoftness', 'triToneBias',
 
       'imageVignette', 'imageVignetteStrength', 'imageAutoLevels', 'imageAutoLevelsStrength',
       'brushPower', 'brushNoiseScale', 'brushSpeckle', 'brushDelta',
     ]);
     applySubset(COLORS, saved.COLORS, [
       'color1', 'stop1', 'color2', 'stop2', 'color3', 'stop3', 'color4', 'stop4', 'color5', 'stop5',
-      'duoToneBlack', 'duoToneWhite',
+      'duoToneBlack', 'duoToneWhite', 'triToneMid',
       'hslFromMin', 'hslFromMax', 'hslToMin', 'hslToMax', 'hslSaturation', 'hslLuminosity',
     ]);
     applySubset(TITLE, saved.TITLE, [
@@ -362,8 +407,15 @@ uniform sampler2D titleMaskTexture;
 
 uniform int renderingStyle;
 uniform float bwThreshold;
+uniform float duoEdgeSoftness;
 uniform vec3 duoToneBlack;
 uniform vec3 duoToneWhite;
+
+uniform vec3 triToneMid;
+uniform float triMidPosition;
+uniform float triMidWidth;
+uniform float triEdgeSoftness;
+uniform float triToneBias;
 
 // Brush transparency mask (for display only)
 uniform vec2 mousePosition;
@@ -426,7 +478,7 @@ void main() {
       hslLuminosity
     )), 1.);
 
-  } else if(renderingStyle == 1) {
+  } else if(renderingStyle == 3) {
     vec3 color;
 
     if(B <= colorStop1.a) {
@@ -445,23 +497,23 @@ void main() {
 
     outputColor = vec4(color.rgb, 1.0);
 
-  } else if(renderingStyle == 2) {
-    outputColor = vec4(
-      1000.0 * abs(pixel.x - previousPixel.x) + 1.0 * pixel.x - 0.5 * previousPixel.y,
-      0.9 * pixel.x - 2.0 * pixel.y,
-      10000.0 * abs(pixel.y - previousPixel.y),
-      1.0
-    );
-
-  } else if(renderingStyle == 3) {
-    outputColor = vec4(
-      10000.0 * abs(pixel.y - previousPixel.y),
-      1000.0 * abs(pixel.x - previousPixel.x) + 1.0 * pixel.x - 0.5 * previousPixel.y,
-      0.9 * pixel.x - 2.0 * pixel.y,
-      1.0
-    );
-
   } else if(renderingStyle == 4) {
+    outputColor = vec4(
+      1000.0 * abs(pixel.x - previousPixel.x) + 1.0 * pixel.x - 0.5 * previousPixel.y,
+      0.9 * pixel.x - 2.0 * pixel.y,
+      10000.0 * abs(pixel.y - previousPixel.y),
+      1.0
+    );
+
+  } else if(renderingStyle == 5) {
+    outputColor = vec4(
+      10000.0 * abs(pixel.y - previousPixel.y),
+      1000.0 * abs(pixel.x - previousPixel.x) + 1.0 * pixel.x - 0.5 * previousPixel.y,
+      0.9 * pixel.x - 2.0 * pixel.y,
+      1.0
+    );
+
+  } else if(renderingStyle == 6) {
     outputColor = vec4(
       1000.0 * abs(pixel.x - previousPixel.x) + 1.0 * pixel.x - 50000.0 * previousPixel.y,
       10000.0 * abs(pixel.y - previousPixel.y),
@@ -469,26 +521,39 @@ void main() {
       1.0
     );
 
-  } else if(renderingStyle == 5) {
+  } else if(renderingStyle == 7) {
     float c = A - B;
     outputColor = vec4(c, c, c, 1.0);
     vec4 rbow = rainbow(v_uv.xy + time*.5);
     float gBranch = when_gt(B, 0.01);
     outputColor = mix(outputColor, outputColor - rbow, gBranch);
 
-  } else if(renderingStyle == 6) {
+  } else if(renderingStyle == 8) {
     float grayValue = pixel.r - pixel.g;
     outputColor = vec4(grayValue, grayValue, grayValue, 1.0);
 
-  } else if(renderingStyle == 7) {
+  } else if(renderingStyle == 1) {
     float grayValue = pixel.r - pixel.g;
-    if(grayValue > bwThreshold) {
-      outputColor = vec4(duoToneBlack, 1.0);
-    } else {
-      outputColor = vec4(duoToneWhite, 1.0);
-    }
+    float s = max(0.0, duoEdgeSoftness);
+    float t = smoothstep(bwThreshold - s, bwThreshold + s, grayValue);
+    vec3 col = mix(duoToneWhite, duoToneBlack, t);
+    outputColor = vec4(col, 1.0);
 
-  } else if(renderingStyle == 8) {
+  } else if(renderingStyle == 2) {
+    float grayValue = pixel.r - pixel.g;
+    float n = clamp(grayValue * 0.5 + 0.5 + triToneBias, 0.0, 1.0);
+    float halfWidth = max(0.001, triMidWidth * 0.5);
+    float edge = max(0.0001, triEdgeSoftness);
+    float midStart = clamp(triMidPosition - halfWidth, 0.0, 1.0);
+    float midEnd = clamp(triMidPosition + halfWidth, 0.0, 1.0);
+
+    float t1 = smoothstep(midStart - edge, midStart + edge, n);
+    float t2 = smoothstep(midEnd - edge, midEnd + edge, n);
+    vec3 base = mix(duoToneBlack, triToneMid, t1);
+    vec3 col = mix(base, duoToneWhite, t2);
+    outputColor = vec4(col, 1.0);
+
+  } else if(renderingStyle == 9) {
     outputColor = pixel;
   }
 
@@ -612,9 +677,15 @@ const uniforms = {
     // 0 = normal full-screen display, 1 = show only title region (masked) during initial load.
     titleOnly: { value: 0 },
     titleMaskTexture: { value: null },
-    bwThreshold: { value: 0.07 },
+    bwThreshold: { value: RD.bwThreshold },
+    duoEdgeSoftness: { value: RD.duoEdgeSoftness },
     duoToneBlack: { value: new THREE.Color(COLORS.duoToneBlack) },
     duoToneWhite: { value: new THREE.Color(COLORS.duoToneWhite) },
+    triToneMid: { value: new THREE.Color(COLORS.triToneMid) },
+    triMidPosition: { value: RD.triMidPosition },
+    triMidWidth: { value: RD.triMidWidth },
+    triEdgeSoftness: { value: RD.triEdgeSoftness },
+    triToneBias: { value: RD.triToneBias },
     mousePosition: { value: new THREE.Vector2(-1, -1) },
     brushRadius: { value: RD.brushRadius },
     resolution: { value: new THREE.Vector2(900, 900) },
@@ -1701,13 +1772,19 @@ function setupEffectsPanel() {
   prime('rdStepsSlider', RD.stepsPerFrame);
   prime('rdBrushRadiusSlider', RD.brushRadius);
   prime('rdBrushFeatherSlider', RD.brushFeather);
-  prime('rdStyleSlider', RD.renderingStyle);
+  prime('rdStyleSelect', RD.renderingStyle);
   prime('rdBiasXSlider', RD.biasX);
   prime('rdBiasYSlider', RD.biasY);
   prime('rdWarmStartSlider', RD.warmStartIterations);
   prime('rdSourceStrengthSlider', RD.sourceStrength);
   prime('rdSourceStrengthNumber', RD.sourceStrength);
   prime('rdSimScaleSlider', RD.simScale);
+  prime('rdThresholdSlider', RD.bwThreshold);
+  prime('rdDuoEdgeSlider', RD.duoEdgeSoftness);
+  prime('rdTritonePosSlider', RD.triMidPosition);
+  prime('rdTritoneWidthSlider', RD.triMidWidth);
+  prime('rdTritoneEdgeSlider', RD.triEdgeSoftness);
+  prime('rdTritoneBiasSlider', RD.triToneBias);
 
   const toggleBtn = document.getElementById('toggleControls');
   const controlsContent = document.getElementById('controlsContent');
@@ -1767,12 +1844,28 @@ function setupEffectsPanel() {
     valueEl.textContent = format(parseFloat(slider.value));
   }
 
+  function bindSelect(id, onValue) {
+    const select = document.getElementById(id);
+    if (!select) return;
+    select.addEventListener('change', (ev) => {
+      const value = parseInt(ev.target.value, 10);
+      if (!Number.isFinite(value)) return;
+      onValue(value);
+    });
+  }
+
   function setSlider(id, valueId, value, decimals) {
     const slider = document.getElementById(id);
     const valueEl = document.getElementById(valueId);
     if (!slider || !valueEl) return;
     slider.value = String(value);
     valueEl.textContent = decimals > 0 ? Number(value).toFixed(decimals) : String(Math.round(value));
+  }
+
+  function setSelect(id, value) {
+    const select = document.getElementById(id);
+    if (!select) return;
+    select.value = String(value);
   }
 
   function bindSliderWithNumber(id, numberId, valueId, decimals, onValue) {
@@ -1884,33 +1977,68 @@ function setupEffectsPanel() {
     uniforms.simulation.brushFeather.value = RD.brushFeather;
   });
 
-  bindSlider('rdStyleSlider', 'rdStyleValue', 0, (v) => {
-    RD.renderingStyle = Math.round(v);
-    uniforms.display.renderingStyle.value = RD.renderingStyle;
-    updateRenderingControlsVisibility();
-    updateStyleName();
-  });
-
   const styleNameEl = document.getElementById('rdStyleName');
   const hslControls = document.getElementById('rdHslControls');
   const gradientControls = document.getElementById('rdGradientControls');
-  const thresholdControls = document.getElementById('rdThresholdControls');
+  const toneColorsControls = document.getElementById('rdToneColorsControls');
+  const duoToneControls = document.getElementById('rdDuoToneControls');
+  const tritoneControls = document.getElementById('rdTritoneControls');
 
   const STYLE_NAMES = {
     0: 'HSL Mapping',
-    1: 'Gradient',
-    2: 'Purple/Yellow',
-    3: 'Turquoise/Fire',
-    4: 'Radioactive',
-    5: 'Rainbow',
-    6: 'Black & White Soft',
-    7: 'Duo Tone Sharp',
-    8: 'Red/Green Raw',
+    1: 'Duo Tone Sharp',
+    2: 'Tritone Sharp',
+    3: 'Gradient',
+    4: 'Purple/Yellow',
+    5: 'Turquoise/Fire',
+    6: 'Radioactive',
+    7: 'Rainbow',
+    8: 'Black & White Soft',
+    9: 'Red/Green Raw',
   };
+
+  const STYLE_OPTIONS = Object.keys(STYLE_NAMES)
+    .map((key) => ({ value: parseInt(key, 10), label: STYLE_NAMES[key] }))
+    .sort((a, b) => a.value - b.value);
+
+  const styleSelect = document.getElementById('rdStyleSelect');
+  if (styleSelect) {
+    styleSelect.innerHTML = '';
+    STYLE_OPTIONS.forEach((opt) => {
+      const el = document.createElement('option');
+      el.value = String(opt.value);
+      el.textContent = opt.label;
+      styleSelect.appendChild(el);
+    });
+    styleSelect.value = String(RD.renderingStyle);
+    styleSelect.addEventListener('change', (ev) => {
+      const value = parseInt(ev.target.value, 10);
+      if (!Number.isFinite(value)) return;
+      RD.renderingStyle = value;
+      uniforms.display.renderingStyle.value = RD.renderingStyle;
+      updateRenderingControlsVisibility();
+      updateStyleName();
+      applyStyleDefaultsFromStorage(RD.renderingStyle);
+    });
+  }
 
   function updateStyleName() {
     if (!styleNameEl) return;
     styleNameEl.textContent = STYLE_NAMES[RD.renderingStyle] ?? String(RD.renderingStyle);
+  }
+
+  async function applyStyleDefaultsFromStorage(styleId) {
+    const saved = readSavedDefaults();
+    const styleEntry = saved?.styles?.[String(styleId)] || saved?.styles?.[styleId];
+    if (!styleEntry || typeof styleEntry !== 'object') return false;
+    const settings = {
+      version: 1,
+      RD: { ...styleEntry.RD, renderingStyle: styleId },
+      COLORS: { ...styleEntry.COLORS },
+      TITLE: { ...styleEntry.TITLE },
+    };
+    await applySettings(settings);
+    return true;
   }
 
   function updateRenderingControlsVisibility() {
@@ -1918,10 +2046,16 @@ function setupEffectsPanel() {
       hslControls.classList.toggle('is-hidden', RD.renderingStyle !== 0);
     }
     if (gradientControls) {
-      gradientControls.classList.toggle('is-hidden', RD.renderingStyle !== 1);
+      gradientControls.classList.toggle('is-hidden', RD.renderingStyle !== 3);
     }
-    if (thresholdControls) {
-      thresholdControls.classList.toggle('is-hidden', RD.renderingStyle !== 7);
+    if (toneColorsControls) {
+      toneColorsControls.classList.toggle('is-hidden', !(RD.renderingStyle === 1 || RD.renderingStyle === 2));
+    }
+    if (duoToneControls) {
+      duoToneControls.classList.toggle('is-hidden', RD.renderingStyle !== 1);
+    }
+    if (tritoneControls) {
+      tritoneControls.classList.toggle('is-hidden', RD.renderingStyle !== 2);
     }
   }
 
@@ -1943,7 +2077,7 @@ function setupEffectsPanel() {
     v.set(rgb.r, rgb.g, rgb.b, stop);
   }
 
-  // Gradient controls (style 1)
+  // Gradient controls (style 3)
   const grad = {
     c1: document.getElementById('rdColor1'), s1: document.getElementById('rdStop1Slider'), v1: document.getElementById('rdStop1Value'),
     c2: document.getElementById('rdColor2'), s2: document.getElementById('rdStop2Slider'), v2: document.getElementById('rdStop2Value'),
@@ -2005,16 +2139,45 @@ function setupEffectsPanel() {
   updateRenderingControlsVisibility();
   updateStyleName();
 
-  // Threshold slider (for B/W Sharp)
+  // Duo tone controls (style 1)
   bindSlider('rdThresholdSlider', 'rdThresholdValue', 2, (v) => {
-    uniforms.display.bwThreshold.value = Math.max(0.0, Math.min(1.0, v));
+    RD.bwThreshold = Math.max(0.0, Math.min(1.0, v));
+    uniforms.display.bwThreshold.value = RD.bwThreshold;
   });
 
-  // Duo tone colors (style 7)
+  bindSlider('rdDuoEdgeSlider', 'rdDuoEdgeValue', 2, (v) => {
+    RD.duoEdgeSoftness = Math.max(0.0, Math.min(0.2, v));
+    uniforms.display.duoEdgeSoftness.value = RD.duoEdgeSoftness;
+  });
+
+  // Tritone controls (style 2)
+  bindSlider('rdTritonePosSlider', 'rdTritonePosValue', 2, (v) => {
+    RD.triMidPosition = Math.max(0.0, Math.min(1.0, v));
+    uniforms.display.triMidPosition.value = RD.triMidPosition;
+  });
+
+  bindSlider('rdTritoneWidthSlider', 'rdTritoneWidthValue', 2, (v) => {
+    RD.triMidWidth = Math.max(0.02, Math.min(0.8, v));
+    uniforms.display.triMidWidth.value = RD.triMidWidth;
+  });
+
+  bindSlider('rdTritoneEdgeSlider', 'rdTritoneEdgeValue', 2, (v) => {
+    RD.triEdgeSoftness = Math.max(0.0, Math.min(0.2, v));
+    uniforms.display.triEdgeSoftness.value = RD.triEdgeSoftness;
+  });
+
+  bindSlider('rdTritoneBiasSlider', 'rdTritoneBiasValue', 2, (v) => {
+    RD.triToneBias = Math.max(-0.5, Math.min(0.5, v));
+    uniforms.display.triToneBias.value = RD.triToneBias;
+  });
+
+  // Tone colors (styles 1 & 2)
   const duoToneBlackInput = document.getElementById('rdDuoToneBlack');
   const duoToneWhiteInput = document.getElementById('rdDuoToneWhite');
   const duoToneBlackValue = document.getElementById('rdDuoToneBlackValue');
   const duoToneWhiteValue = document.getElementById('rdDuoToneWhiteValue');
+  const triToneMidInput = document.getElementById('rdTritoneMidColor');
+  const triToneMidValue = document.getElementById('rdTritoneMidValue');
 
   function setDuoToneColor(which, hex) {
     if (which === 'black') {
@@ -2029,6 +2192,12 @@ function setupEffectsPanel() {
     }
   }
 
+  function setTriToneMid(hex) {
+    COLORS.triToneMid = hex;
+    if (uniforms.display.triToneMid?.value) uniforms.display.triToneMid.value.set(hex);
+    if (triToneMidValue) triToneMidValue.textContent = hex;
+  }
+
   if (duoToneBlackInput) {
     duoToneBlackInput.value = COLORS.duoToneBlack;
     setDuoToneColor('black', duoToneBlackInput.value);
@@ -2038,6 +2207,12 @@ function setupEffectsPanel() {
     duoToneWhiteInput.value = COLORS.duoToneWhite;
     setDuoToneColor('white', duoToneWhiteInput.value);
     duoToneWhiteInput.addEventListener('input', () => setDuoToneColor('white', duoToneWhiteInput.value));
+  }
+
+  if (triToneMidInput) {
+    triToneMidInput.value = COLORS.triToneMid;
+    setTriToneMid(triToneMidInput.value);
+    triToneMidInput.addEventListener('input', () => setTriToneMid(triToneMidInput.value));
   }
 
   // Invert duo-tone colors button
@@ -2092,6 +2267,7 @@ function setupEffectsPanel() {
 
     if (uniforms.display.duoToneBlack?.value) uniforms.display.duoToneBlack.value.set(COLORS.duoToneBlack);
     if (uniforms.display.duoToneWhite?.value) uniforms.display.duoToneWhite.value.set(COLORS.duoToneWhite);
+    if (uniforms.display.triToneMid?.value) uniforms.display.triToneMid.value.set(COLORS.triToneMid);
   };
 
   const applySettings = async (settings) => {
@@ -2128,6 +2304,12 @@ function setupEffectsPanel() {
     uniforms.simulation.sourceStrength.value = RD.sourceStrength;
 
     uniforms.display.renderingStyle.value = RD.renderingStyle;
+    uniforms.display.bwThreshold.value = RD.bwThreshold;
+    uniforms.display.duoEdgeSoftness.value = RD.duoEdgeSoftness;
+    uniforms.display.triMidPosition.value = RD.triMidPosition;
+    uniforms.display.triMidWidth.value = RD.triMidWidth;
+    uniforms.display.triEdgeSoftness.value = RD.triEdgeSoftness;
+    uniforms.display.triToneBias.value = RD.triToneBias;
     if (uniforms.display.imageVignetteEnabled) {
       uniforms.display.imageVignetteEnabled.value = RD.imageVignette ? 1.0 : 0.0;
     }
@@ -2143,18 +2325,26 @@ function setupEffectsPanel() {
     setSlider('rdTimestepSlider', 'rdTimestepValue', RD.timestep, 2);
     setSlider('rdStepsSlider', 'rdStepsValue', RD.stepsPerFrame, 0);
     setSlider('rdBrushRadiusSlider', 'rdBrushRadiusValue', RD.brushRadius, 0);
-    setSlider('rdStyleSlider', 'rdStyleValue', RD.renderingStyle, 0);
+    setSelect('rdStyleSelect', RD.renderingStyle);
     setSlider('rdBiasXSlider', 'rdBiasXValue', RD.biasX, 3);
     setSlider('rdBiasYSlider', 'rdBiasYValue', RD.biasY, 3);
     setSlider('rdWarmStartSlider', 'rdWarmStartValue', RD.warmStartIterations, 0);
     setSliderWithNumber('rdSourceStrengthSlider', 'rdSourceStrengthNumber', 'rdSourceStrengthValue', RD.sourceStrength, 3);
     setSlider('rdSimScaleSlider', 'rdSimScaleValue', RD.simScale, 2);
+    setSlider('rdThresholdSlider', 'rdThresholdValue', RD.bwThreshold, 2);
+    setSlider('rdDuoEdgeSlider', 'rdDuoEdgeValue', RD.duoEdgeSoftness, 2);
+    setSlider('rdTritonePosSlider', 'rdTritonePosValue', RD.triMidPosition, 2);
+    setSlider('rdTritoneWidthSlider', 'rdTritoneWidthValue', RD.triMidWidth, 2);
+    setSlider('rdTritoneEdgeSlider', 'rdTritoneEdgeValue', RD.triEdgeSoftness, 2);
+    setSlider('rdTritoneBiasSlider', 'rdTritoneBiasValue', RD.triToneBias, 2);
 
-    // Duo tone UI sync (style 7)
+    // Tone UI sync (styles 1 & 2)
     if (duoToneBlackInput) duoToneBlackInput.value = COLORS.duoToneBlack;
     if (duoToneWhiteInput) duoToneWhiteInput.value = COLORS.duoToneWhite;
     if (duoToneBlackValue) duoToneBlackValue.textContent = COLORS.duoToneBlack;
     if (duoToneWhiteValue) duoToneWhiteValue.textContent = COLORS.duoToneWhite;
+    if (triToneMidInput) triToneMidInput.value = COLORS.triToneMid;
+    if (triToneMidValue) triToneMidValue.textContent = COLORS.triToneMid;
 
     // Colors UI sync omitted for brevity
 
@@ -2565,6 +2755,8 @@ function setupImageRolling() {
   const saveDefaultBtn = document.getElementById('saveDefaultBtn');
   if (saveDefaultBtn) {
     saveDefaultBtn.addEventListener('click', () => {
+      const saved = readSavedDefaults() || {};
+      const styles = saved.styles && typeof saved.styles === 'object' ? { ...saved.styles } : {};
       const defaultsPayload = {
         RD: {
           f: RD.f,
@@ -2586,6 +2778,12 @@ function setupImageRolling() {
           biasY: RD.biasY,
           sourceStrength: RD.sourceStrength,
           invertImage: RD.invertImage,
+          bwThreshold: RD.bwThreshold,
+          duoEdgeSoftness: RD.duoEdgeSoftness,
+          triMidPosition: RD.triMidPosition,
+          triMidWidth: RD.triMidWidth,
+          triEdgeSoftness: RD.triEdgeSoftness,
+          triToneBias: RD.triToneBias,
           imageVignette: RD.imageVignette,
           imageVignetteStrength: RD.imageVignetteStrength,
           imageAutoLevels: RD.imageAutoLevels,
@@ -2600,6 +2798,7 @@ function setupImageRolling() {
           color5: COLORS.color5, stop5: COLORS.stop5,
           duoToneBlack: COLORS.duoToneBlack,
           duoToneWhite: COLORS.duoToneWhite,
+          triToneMid: COLORS.triToneMid,
           hslFromMin: COLORS.hslFromMin,
           hslFromMax: COLORS.hslFromMax,
           hslToMin: COLORS.hslToMin,
@@ -2623,14 +2822,19 @@ function setupImageRolling() {
         },
       };
 
+      styles[String(RD.renderingStyle)] = defaultsPayload;
+
       try {
-        localStorage.setItem(DEFAULTS_STORAGE_KEY, JSON.stringify(defaultsPayload));
+        localStorage.setItem(DEFAULTS_STORAGE_KEY, JSON.stringify({
+          version: 2,
+          styles,
+        }));
       } catch {
         alert('Failed to save defaults (storage unavailable).');
         return;
       }
 
-      const configCode = `// RD-06 defaults (saved in localStorage: ${DEFAULTS_STORAGE_KEY})\n${JSON.stringify(defaultsPayload, null, 2)}`;
+      const configCode = `// RD-06 defaults (saved in localStorage: ${DEFAULTS_STORAGE_KEY})\n// Style: ${RD.renderingStyle}\n${JSON.stringify({ version: 2, styles }, null, 2)}`;
 
       navigator.clipboard.writeText(configCode).then(() => {
         const originalText = saveDefaultBtn.textContent;
