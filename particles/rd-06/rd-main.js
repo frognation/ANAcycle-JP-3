@@ -25,8 +25,48 @@ const IMAGES = [
 ];
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|avif)$/i;
-const IMAGE_DIR_URL = new URL('../../_img/', import.meta.url).href;
-const IMAGE_MANIFEST_URL = new URL('../../_img/manifest.json', import.meta.url).href;
+
+const IS_DEV = (() => {
+  try {
+    const host = String(globalThis.location?.hostname || '').toLowerCase();
+    const proto = String(globalThis.location?.protocol || '').toLowerCase();
+    return proto === 'file:' || host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  } catch {
+    return true;
+  }
+})();
+
+const PERF = {
+  maxDpr: 2,
+  // Aim for ~60fps; adjust simulation steps to keep frames smooth.
+  adaptiveSteps: true,
+  targetFrameMs: 16.7,
+  // Never drop below this multiplier of user-selected steps.
+  minStepsMultiplier: 0.35,
+
+  // Hard cap for sim render target pixel count to avoid 4K+ stalls.
+  // (This is in CSS-pixel space * simScale^2, before DPR.)
+  maxSimPixels: 1_800_000,
+
+  // AutoLevels/Vignette are CPU loops over pixels; do them on a smaller buffer.
+  postFxMaxDim: 1024,
+};
+
+const PERF_DEBUG = (() => {
+  try {
+    return new URLSearchParams(globalThis.location?.search || '').has('perfdebug');
+  } catch {
+    return false;
+  }
+})();
+
+const IMAGE_SOURCES = [
+  { dir: '../../_img_web/', manifest: '../../_img_web/manifest.json', segment: '/_img_web/' },
+  { dir: '../../_img/', manifest: '../../_img/manifest.json', segment: '/_img/' },
+];
+
+let ACTIVE_IMAGE_DIR_URL = new URL(IMAGE_SOURCES[1].dir, import.meta.url).href;
+let ACTIVE_IMAGE_SEGMENT = IMAGE_SOURCES[1].segment;
 
 async function resolveImageFilenames() {
   const normalize = (name) => {
@@ -51,49 +91,64 @@ async function resolveImageFilenames() {
     return out;
   };
 
-  // 1) Try a simple manifest file: /_img/manifest.json
-  try {
-    const res = await fetch(`${IMAGE_MANIFEST_URL}?t=${Date.now()}`, { cache: 'no-store' });
-    if (res.ok) {
+  const cache = IS_DEV ? 'no-store' : 'force-cache';
+  const bust = IS_DEV ? `?t=${Date.now()}` : '';
+
+  // 1) Prefer manifest.json (works on Vercel, reliable ordering).
+  for (const src of IMAGE_SOURCES) {
+    try {
+      const manifestUrl = new URL(src.manifest, import.meta.url).href;
+      const res = await fetch(`${manifestUrl}${bust}`, { cache });
+      if (!res.ok) continue;
       const data = await res.json();
       const list = Array.isArray(data) ? data : (Array.isArray(data?.images) ? data.images : []);
       const files = uniq(list);
-      if (files.length) return files;
+      if (!files.length) continue;
+
+      ACTIVE_IMAGE_DIR_URL = new URL(src.dir, import.meta.url).href;
+      ACTIVE_IMAGE_SEGMENT = src.segment;
+      return files;
+    } catch {
+      // ignore and try next source
     }
-  } catch {
-    // ignore
   }
 
-  // 2) Try directory listing (works with python http.server and some static servers)
-  try {
-    const res = await fetch(`${IMAGE_DIR_URL}?t=${Date.now()}`, { cache: 'no-store' });
-    if (res.ok) {
-      const html = await res.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const links = Array.from(doc.querySelectorAll('a[href]'));
-      const hrefs = links.map((a) => {
-        try {
-          const u = new URL(a.getAttribute('href'), IMAGE_DIR_URL);
-          if (!u.pathname) return null;
-          const pathname = u.pathname;
-          if (!pathname.toLowerCase().includes('/_img/')) return null;
-          const filename = pathname.split('/').pop();
-          return filename ? decodeURIComponent(filename) : null;
-        } catch {
-          return null;
-        }
-      });
+  // 2) Dev-only fallback: directory listing (works with python http.server)
+  if (IS_DEV) {
+    for (const src of IMAGE_SOURCES) {
+      try {
+        const dirUrl = new URL(src.dir, import.meta.url).href;
+        const res = await fetch(`${dirUrl}${bust}`, { cache: 'no-store' });
+        if (!res.ok) continue;
 
-      const files = uniq(hrefs);
-      if (files.length) {
-        // Keep a stable order for numbered files.
-        const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-        files.sort(collator.compare);
-        return files;
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const links = Array.from(doc.querySelectorAll('a[href]'));
+        const hrefs = links.map((a) => {
+          try {
+            const u = new URL(a.getAttribute('href'), dirUrl);
+            if (!u.pathname) return null;
+            const pathname = u.pathname.toLowerCase();
+            if (!pathname.includes(src.segment.toLowerCase())) return null;
+            const filename = u.pathname.split('/').pop();
+            return filename ? decodeURIComponent(filename) : null;
+          } catch {
+            return null;
+          }
+        });
+
+        const files = uniq(hrefs);
+        if (files.length) {
+          const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+          files.sort(collator.compare);
+          ACTIVE_IMAGE_DIR_URL = dirUrl;
+          ACTIVE_IMAGE_SEGMENT = src.segment;
+          return files;
+        }
+      } catch {
+        // ignore
       }
     }
-  } catch {
-    // ignore
   }
 
   // 3) Fallback to the hardcoded list.
@@ -138,25 +193,25 @@ const PRESETS = [
 ];
 
 const RD = {
-  f: 0.028,
+  f: 0.0375,
   k: 0.0655,
   dA: 0.167,
   dB: 0.0775,
   timestep: 1.05,
   brushRadius: 180.0,
   brushFeather: 0.84,
-  stepsPerFrame: 30,
+  stepsPerFrame: 66,
   renderingStyle: 1,
-  warmStartIterations: 240,
+  warmStartIterations: 90,
   simScale: 1.0,
-  biasX: 0.0,
-  biasY: 0.0,
-  sourceStrength: 0.005,
+  biasX: 0.102,
+  biasY: -0.083,
+  sourceStrength: 0.003,
   invertImage: false,
   showOriginal: false,
 
   // Duo/Tritone tuning
-  bwThreshold: 0.07,
+  bwThreshold: 0.12,
   duoEdgeSoftness: 0.0,
   triMidPosition: 0.82,
   triMidWidth: 0.12,
@@ -164,9 +219,9 @@ const RD = {
   triToneBias: -0.15,
 
   // Image controls
-  imageVignette: false,
+  imageVignette: true,
   imageVignetteStrength: 0.65,
-  imageAutoLevels: false,
+  imageAutoLevels: true,
   imageAutoLevelsStrength: 1.0,
 
   // Brush tuning (simulation)
@@ -199,8 +254,8 @@ const COLORS = {
   color5: '#000000', stop5: 0.8,
 
   // Duo tone (style 1)
-  duoToneBlack: '#000000',
-  duoToneWhite: '#003cf0',
+  duoToneBlack: '#ffffff',
+  duoToneWhite: '#00ff59',
 
   // Tritone mid color (style 2)
   triToneMid: '#f5f5f5',
@@ -704,6 +759,9 @@ let seedCtx;
 let bgCanvas;
 let bgCtx;
 
+let postFxCanvas;
+let postFxCtx;
+
 let simWidth = 0;
 let simHeight = 0;
 
@@ -722,6 +780,8 @@ let hasSeededOnce = false;
 
 let warmStartToken = 0;
 let isWarmStarting = false;
+
+let perfDebugEl;
 
 const uniforms = {
   simulation: {
@@ -913,32 +973,62 @@ function applyVignetteToCanvas(ctx, width, height, strength = 0.65) {
   ctx.putImageData(img, 0, 0);
 }
 
-function drawCoverImageToBackground(imageEl, width, height) {
-  if (!bgCtx || !bgCanvas) return;
-  bgCtx.clearRect(0, 0, width, height);
+function drawCoverImageWithPostFX(targetCtx, imageEl, width, height) {
+  if (!targetCtx) return;
+  targetCtx.clearRect(0, 0, width, height);
 
   const imgW = imageEl.naturalWidth || imageEl.width;
   const imgH = imageEl.naturalHeight || imageEl.height;
   if (!imgW || !imgH) return;
 
-  const scale = Math.max(width / imgW, height / imgH);
-  const drawW = imgW * scale;
-  const drawH = imgH * scale;
-  const dx = (width - drawW) / 2;
-  const dy = (height - drawH) / 2;
+  const needsPostFx = !!RD.imageAutoLevels || !!RD.imageVignette;
 
-  bgCtx.save();
-  bgCtx.filter = RD.invertImage ? 'grayscale(1) invert(1)' : 'grayscale(1)';
-  bgCtx.drawImage(imageEl, dx, dy, drawW, drawH);
-  bgCtx.restore();
+  const doDraw = (ctx, w, h) => {
+    const scale = Math.max(w / imgW, h / imgH);
+    const drawW = imgW * scale;
+    const drawH = imgH * scale;
+    const dx = (w - drawW) / 2;
+    const dy = (h - drawH) / 2;
 
-  if (RD.imageAutoLevels) {
-    applyAutoLevelsToCanvas(bgCtx, width, height, RD.imageAutoLevelsStrength);
+    ctx.save();
+    ctx.filter = RD.invertImage ? 'grayscale(1) invert(1)' : 'grayscale(1)';
+    ctx.drawImage(imageEl, dx, dy, drawW, drawH);
+    ctx.restore();
+  };
+
+  const shouldLowRes = needsPostFx && Math.max(width, height) > PERF.postFxMaxDim;
+  if (!shouldLowRes) {
+    doDraw(targetCtx, width, height);
+    if (RD.imageAutoLevels) applyAutoLevelsToCanvas(targetCtx, width, height, RD.imageAutoLevelsStrength);
+    if (RD.imageVignette) applyVignetteToCanvas(targetCtx, width, height, RD.imageVignetteStrength);
+    return;
   }
 
-  if (RD.imageVignette) {
-    applyVignetteToCanvas(bgCtx, width, height, RD.imageVignetteStrength);
+  const scale = Math.max(0.05, Math.min(1, PERF.postFxMaxDim / Math.max(width, height)));
+  const pw = Math.max(2, Math.round(width * scale));
+  const ph = Math.max(2, Math.round(height * scale));
+
+  if (!postFxCanvas) {
+    postFxCanvas = document.createElement('canvas');
+    postFxCtx = postFxCanvas.getContext('2d', { willReadFrequently: true });
   }
+  postFxCanvas.width = pw;
+  postFxCanvas.height = ph;
+  postFxCtx.clearRect(0, 0, pw, ph);
+
+  doDraw(postFxCtx, pw, ph);
+  if (RD.imageAutoLevels) applyAutoLevelsToCanvas(postFxCtx, pw, ph, RD.imageAutoLevelsStrength);
+  if (RD.imageVignette) applyVignetteToCanvas(postFxCtx, pw, ph, RD.imageVignetteStrength);
+
+  targetCtx.save();
+  targetCtx.imageSmoothingEnabled = true;
+  targetCtx.drawImage(postFxCanvas, 0, 0, pw, ph, 0, 0, width, height);
+  targetCtx.restore();
+}
+
+function drawCoverImageToBackground(imageEl, width, height) {
+  if (!bgCtx || !bgCanvas) return;
+  drawCoverImageWithPostFX(bgCtx, imageEl, width, height);
 }
 
 function setVignetteEnabled(enabled) {
@@ -1129,30 +1219,7 @@ function drawTitleOverlay(ctx, width, height) {
 }
 
 function drawCoverImageToSeed(imageEl, width, height) {
-  seedCtx.clearRect(0, 0, width, height);
-
-  const imgW = imageEl.naturalWidth || imageEl.width;
-  const imgH = imageEl.naturalHeight || imageEl.height;
-  if (!imgW || !imgH) return;
-
-  const scale = Math.max(width / imgW, height / imgH);
-  const drawW = imgW * scale;
-  const drawH = imgH * scale;
-  const dx = (width - drawW) / 2;
-  const dy = (height - drawH) / 2;
-
-  seedCtx.save();
-  seedCtx.filter = RD.invertImage ? 'grayscale(1) invert(1)' : 'grayscale(1)';
-  seedCtx.drawImage(imageEl, dx, dy, drawW, drawH);
-  seedCtx.restore();
-
-  if (RD.imageAutoLevels) {
-    applyAutoLevelsToCanvas(seedCtx, width, height, RD.imageAutoLevelsStrength);
-  }
-
-  if (RD.imageVignette) {
-    applyVignetteToCanvas(seedCtx, width, height, RD.imageVignetteStrength);
-  }
+  drawCoverImageWithPostFX(seedCtx, imageEl, width, height);
 }
 
 function ensureTitleMaskCanvas(width, height) {
@@ -1389,7 +1456,7 @@ function loadImageAtIndex(index) {
       rec.loaded = false;
       reject(e);
     };
-    img.src = new URL(`../../_img/${rec.filename}`, import.meta.url).href;
+    img.src = new URL(rec.filename, ACTIVE_IMAGE_DIR_URL).href;
   });
 }
 
@@ -1497,7 +1564,8 @@ function setupThree(canvas) {
     // Surface a clear error for environments where WebGL is unavailable (e.g., some webviews).
     throw new Error(`WebGL initialization failed: ${err && err.message ? err.message : String(err)}`);
   }
-  renderer.setPixelRatio(window.devicePixelRatio);
+  const dpr = Math.max(1, Math.min(PERF.maxDpr, window.devicePixelRatio || 1));
+  renderer.setPixelRatio(dpr);
   renderer.setClearColor(0x000000, 0);
 
   const isWebGL2 = !!renderer.capabilities?.isWebGL2;
@@ -1579,9 +1647,21 @@ void main() {
       setBodyBackground(images[currentImageIndex]?.filename);
     }
 
+    // DPR can change when moving windows across displays.
+    const nextDpr = Math.max(1, Math.min(PERF.maxDpr, window.devicePixelRatio || 1));
+    renderer.setPixelRatio(nextDpr);
+
     renderer.setSize(width, height);
-    simWidth = Math.max(2, Math.round(width * RD.simScale));
-    simHeight = Math.max(2, Math.round(height * RD.simScale));
+
+    // Cap sim RT size on very large screens to keep animation smooth.
+    let effectiveScale = Math.max(0.25, Math.min(1, RD.simScale));
+    const targetPixels = Math.max(1, width * height * effectiveScale * effectiveScale);
+    if (targetPixels > PERF.maxSimPixels) {
+      effectiveScale *= Math.sqrt(PERF.maxSimPixels / targetPixels);
+    }
+
+    simWidth = Math.max(2, Math.round(width * effectiveScale));
+    simHeight = Math.max(2, Math.round(height * effectiveScale));
     uniforms.simulation.resolution.value.set(simWidth, simHeight);
     if (uniforms.display && uniforms.display.resolution) {
       uniforms.display.resolution.value.set(simWidth, simHeight);
@@ -1668,8 +1748,48 @@ void main() {
   window.addEventListener('pointerleave', handlePointerLeave);
 
   let raf = 0;
+  let lastFrameTime = 0;
+  let smoothedFrameMs = PERF.targetFrameMs;
+  let stepsMultiplier = 1.0;
+
+  if (PERF_DEBUG && !perfDebugEl) {
+    perfDebugEl = document.createElement('div');
+    perfDebugEl.style.position = 'fixed';
+    perfDebugEl.style.left = '10px';
+    perfDebugEl.style.top = '10px';
+    perfDebugEl.style.zIndex = '99999';
+    perfDebugEl.style.padding = '8px 10px';
+    perfDebugEl.style.borderRadius = '8px';
+    perfDebugEl.style.background = 'rgba(0,0,0,0.7)';
+    perfDebugEl.style.border = '1px solid rgba(255,255,255,0.25)';
+    perfDebugEl.style.color = '#fff';
+    perfDebugEl.style.fontFamily = "'Courier New', Courier, monospace";
+    perfDebugEl.style.fontSize = '12px';
+    perfDebugEl.style.whiteSpace = 'pre';
+    perfDebugEl.textContent = '[perfdebug]';
+    document.body.appendChild(perfDebugEl);
+  }
+
   const animate = (time) => {
     frameCounter++;
+
+    if (lastFrameTime > 0) {
+      const frameMs = Math.max(1, time - lastFrameTime);
+      // Exponential moving average to reduce jitter.
+      smoothedFrameMs = smoothedFrameMs * 0.9 + frameMs * 0.1;
+    }
+    lastFrameTime = time;
+
+    if (PERF.adaptiveSteps && !isWarmStarting && !RD.showOriginal) {
+      // Adjust multiplier slowly so visuals remain stable.
+      if (smoothedFrameMs > PERF.targetFrameMs * 1.2) {
+        stepsMultiplier = Math.max(PERF.minStepsMultiplier, stepsMultiplier * 0.93);
+      } else if (smoothedFrameMs < PERF.targetFrameMs * 0.92) {
+        stepsMultiplier = Math.min(1.0, stepsMultiplier * 1.02);
+      }
+    }
+
+    const effectiveSteps = Math.max(1, Math.round(RD.stepsPerFrame * (PERF.adaptiveSteps ? stepsMultiplier : 1)));
 
     // During warm start, let the async seeding advance the sim; only render the current RT.
     if (isWarmStarting) {
@@ -1709,7 +1829,7 @@ void main() {
     }
 
     mesh.material = materials.simulation;
-    for (let i = 0; i < RD.stepsPerFrame; i++) {
+    for (let i = 0; i < effectiveSteps; i++) {
       if (applyBrushThisFrame && i === 1) {
         uniforms.simulation.mousePosition.value.set(-1, -1);
         if (uniforms.display && uniforms.display.mousePosition) {
@@ -1732,6 +1852,19 @@ void main() {
 
     renderer.setRenderTarget(null);
     renderer.render(scene, camera);
+
+    if (PERF_DEBUG && perfDebugEl && frameCounter % 15 === 0) {
+      const dprNow = renderer?.getPixelRatio ? renderer.getPixelRatio() : (window.devicePixelRatio || 1);
+      const fps = Math.max(1, Math.round(1000 / smoothedFrameMs));
+      perfDebugEl.textContent = [
+        '[perfdebug]',
+        `fps~${fps}  frame~${smoothedFrameMs.toFixed(1)}ms`,
+        `steps: ui=${RD.stepsPerFrame} eff=${effectiveSteps} mult=${stepsMultiplier.toFixed(2)}`,
+        `sim: ${simWidth}x${simHeight} (cap=${PERF.maxSimPixels})`,
+        `dpr: ${Number(dprNow).toFixed(2)} (max=${PERF.maxDpr})`,
+        `imgDir: ${ACTIVE_IMAGE_SEGMENT}`,
+      ].join('\n');
+    }
 
     // Safety guard: detect near-uniform sim state (white/black/gray screen) and auto-recover.
     // Runs infrequently to reduce readback stalls.
